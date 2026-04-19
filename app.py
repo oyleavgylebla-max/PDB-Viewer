@@ -11,12 +11,13 @@ from functools import lru_cache
 
 # =============================================================================
 # 🧬 RNA 结构精细化分类与 AIDD 药物重定位平台
-# 版本: 3.1 (优化适应症+新增详细药物分类)
+# 版本: 3.2 (新增按RNA类别批量分析功能)
 # 更新日志:
-#   - 修复盐型药物无适应症数据问题（自动继承游离碱适应症）
-#   - ✨ 新增详细药物分类归属列（ATC二级分类）
-#   - 扩展ATC分类字典到二级，覆盖95%以上上市药物
-#   - 添加常见药物手动映射，彻底解决"暂无明确适应症"问题
+#   - 修复盐型药物无适应症数据问题
+#   - 新增详细药物分类归属列（ATC二级分类）
+#   - ✨ 新增按RNA类别一键批量分析功能
+#   - 自动生成RNA-配体-上市药完整关联表
+#   - 支持按药物分类、适应症、相似度多维度筛选
 # =============================================================================
 
 # --- 🔧 全局配置与缓存系统 ---
@@ -29,7 +30,7 @@ DISEASE_CACHE_FILE = "disease_cache.json"
 DRUG_SEARCH_CACHE_FILE = "drug_search_cache.json"
 
 # --------------------------
-# 升级：完整ATC二级分类字典（覆盖95%以上上市药物）
+# 完整ATC二级分类字典（覆盖95%以上上市药物）
 # --------------------------
 ATC_FULL_MAP = {
     # A: 消化系统及代谢药
@@ -83,7 +84,7 @@ ATC_CLASS_MAP = {
 }
 
 # --------------------------
-# 升级：扩展适应症映射+常见药物手动映射
+# 扩展适应症映射+常见药物手动映射
 # --------------------------
 INDICATION_CN_MAP = {
     "cancer": "癌症", "tumor": "肿瘤", "carcinoma": "恶性肿瘤", "leukemia": "白血病",
@@ -114,7 +115,11 @@ MANUAL_DRUG_INDICATION = {
     "AMIKACIN": "敏感菌所致的严重感染",
     "AMIKACIN SULFATE": "敏感菌所致的严重感染",
     "STREPTOMYCIN": "结核病、鼠疫",
-    "STREPTOMYCIN SULFATE": "结核病、鼠疫"
+    "STREPTOMYCIN SULFATE": "结核病、鼠疫",
+    "ERYTHROMYCIN": "呼吸道感染、皮肤软组织感染",
+    "ERYTHROMYCIN LACTOBIONATE": "呼吸道感染、皮肤软组织感染",
+    "TETRACYCLINE": "立克次体病、支原体肺炎",
+    "TETRACYCLINE HYDROCHLORIDE": "立克次体病、支原体肺炎"
 }
 
 # --------------------------
@@ -254,12 +259,12 @@ def get_smiles_by_id(ligand_id):
     return None
 
 # --------------------------
-# 升级：ChEMBL药物搜索（解决盐型药物无适应症+新增详细药物分类）
+# ChEMBL药物搜索（带药物分类和完整适应症）
 # --------------------------
 @st.cache_data(ttl=86400, show_spinner=False)
 def search_chembl_drugs(smiles, similarity_threshold):
     """
-    升级版：搜索相似上市药物，获取详细中文适应症和药物分类
+    搜索相似上市药物，获取详细中文适应症和药物分类
     返回：药物列表、状态信息、总匹配分子数
     """
     if not smiles: return [], "SMILES为空", 0
@@ -289,12 +294,10 @@ def search_chembl_drugs(smiles, similarity_threshold):
                 
                 drug_name = m.get('pref_name', '').upper()
                 
-                # --------------------------
-                # 升级1：智能适应症获取（解决盐型药物无数据问题）
-                # --------------------------
+                # 智能适应症获取（解决盐型药物无数据问题）
                 indication_list = []
                 
-                # 1. 优先使用手动映射（覆盖最常见的盐型药物）
+                # 1. 优先使用手动映射
                 if drug_name in MANUAL_DRUG_INDICATION:
                     indication_list.append(MANUAL_DRUG_INDICATION[drug_name])
                 
@@ -304,7 +307,6 @@ def search_chembl_drugs(smiles, similarity_threshold):
                     for ind in drug_indications:
                         mesh_term = ind.get('mesh_heading', '').lower()
                         efo_term = ind.get('efo_term', '').lower()
-                        # 翻译为中文
                         for eng, cn in INDICATION_CN_MAP.items():
                             if eng in mesh_term or eng in efo_term:
                                 indication_list.append(cn)
@@ -312,7 +314,6 @@ def search_chembl_drugs(smiles, similarity_threshold):
                 
                 # 3. 盐型药物自动继承游离碱的手动映射
                 if not indication_list:
-                    # 去除常见盐型后缀
                     base_name = drug_name.replace(' SULFATE', '').replace(' HYDROCHLORIDE', '').replace(' HCL', '')
                     if base_name in MANUAL_DRUG_INDICATION:
                         indication_list.append(MANUAL_DRUG_INDICATION[base_name])
@@ -325,9 +326,7 @@ def search_chembl_drugs(smiles, similarity_threshold):
                 unique_indication = list(set(indication_list))
                 indication_str = "、".join(unique_indication)
                 
-                # --------------------------
-                # 升级2：详细药物分类归属（ATC二级分类）
-                # --------------------------
+                # 详细药物分类归属（ATC二级分类）
                 drug_class = "未分类"
                 atc_list = m.get('atc_classifications', [])
                 if atc_list:
@@ -346,7 +345,7 @@ def search_chembl_drugs(smiles, similarity_threshold):
                     "ChEMBL ID": m.get('molecule_chembl_id'),
                     "相似度(%)": round(float(m.get('similarity', 0)), 2),
                     "分子量": round(float(m.get('molecule_properties', {}).get('full_mwt', 0)), 2),
-                    "药物分类归属": drug_class,  # 新增列
+                    "药物分类归属": drug_class,
                     "治疗适应症": indication_str,
                 })
             
@@ -520,8 +519,12 @@ try:
     # 模式2：靶点分析 & AIDD药物筛选
     # ==========================================
     else:
-        # 用Tab拆分单靶点/批量多靶点分析
-        tab_single, tab_batch = st.tabs(["📌 单靶点详细分析", "⚡ 批量多靶点/小分子分析"])
+        # 用Tab拆分三种分析模式
+        tab_single, tab_batch, tab_category = st.tabs([
+            "📌 单靶点详细分析", 
+            "⚡ 批量多靶点分析", 
+            "📊 按RNA类别一键分析"  # 新增第三个Tab
+        ])
         
         # --------------------------
         # Tab1：单靶点详细分析
@@ -577,7 +580,7 @@ try:
             else:
                 st.warning("未找到明确的疾病关联信息。建议结合文献进一步研究。")
 
-            # AIDD药物重定位筛选（升级：带药物分类和完整适应症）
+            # AIDD药物重定位筛选
             if target_id != "ZZZ":
                 st.divider()
                 st.subheader("💊 AIDD 跨靶点药物重定位筛选")
@@ -610,7 +613,7 @@ try:
                                 st.error(f"🚨 错误提示: {msg}")
         
         # --------------------------
-        # Tab2：批量多靶点/小分子分析
+        # Tab2：批量多靶点分析
         # --------------------------
         with tab_batch:
             st.subheader("⚡ 批量多靶点/小分子相似度筛选")
@@ -712,6 +715,149 @@ try:
                         )
                     else:
                         st.warning("🔍 批量分析完成，未匹配到符合条件的上市药物")
+        
+        # --------------------------
+        # Tab3：按RNA类别一键分析（新增核心功能）
+        # --------------------------
+        with tab_category:
+            st.subheader("📊 按RNA类别一键批量分析")
+            st.caption("自动扫描所选RNA类别下所有有配体的靶点，生成完整的RNA-配体-上市药关联表")
+            
+            # 选择RNA类别
+            rna_categories = sorted(df['Category'].unique().tolist())
+            selected_rna_category = st.selectbox(
+                "🔽 选择要分析的 RNA 类别",
+                options=rna_categories,
+                index=0
+            )
+            
+            # 相似度阈值设置
+            col_threshold2, col_empty2 = st.columns([2, 3])
+            with col_threshold2:
+                category_threshold = st.slider("类别分析相似度阈值 (%)", 50, 100, 70, 5)
+            
+            # 一键分析按钮
+            category_search_btn = st.button(
+                f"🚀 一键分析所有 {selected_rna_category} 靶点", 
+                use_container_width=True, 
+                type="primary"
+            )
+            
+            # 类别分析逻辑
+            if category_search_btn:
+                # 获取该类别下所有有配体的靶点
+                category_df = df[df['Category'] == selected_rna_category]
+                valid_targets = category_df[category_df['MainLigandID'] != "ZZZ"]
+                total_targets = len(valid_targets)
+                
+                if total_targets == 0:
+                    st.warning(f"⚠️ {selected_rna_category} 类别下没有找到有核心配体的靶点")
+                else:
+                    st.info(f"📌 正在分析 {selected_rna_category} 类别下的 {total_targets} 个靶点...")
+                    
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    all_category_results = []
+                    
+                    # 遍历该类别下所有靶点
+                    for idx, (_, row) in enumerate(valid_targets.iterrows()):
+                        # 更新进度
+                        progress = (idx + 1) / total_targets
+                        progress_bar.progress(progress)
+                        status_text.text(f"正在处理第 {idx+1}/{total_targets} 个靶点: {row['PDB ID']}")
+                        
+                        pdb_id = row['PDB ID']
+                        ligand_id = row['MainLigandID']
+                        
+                        # 获取SMILES
+                        smiles = get_smiles_by_id(ligand_id)
+                        if not smiles:
+                            st.warning(f"⚠️ 靶点 {pdb_id} (配体 {ligand_id}) 无法获取SMILES，已跳过")
+                            continue
+                        
+                        # 搜索药物
+                        drugs, msg, total = search_chembl_drugs(smiles, category_threshold)
+                        
+                        # 整理结果，添加完整的RNA和配体信息
+                        for drug in drugs:
+                            drug["RNA类别"] = selected_rna_category
+                            drug["PDB ID"] = pdb_id
+                            drug["配体ID"] = ligand_id
+                            drug["RNA结构描述"] = row['Description (描述)']
+                            all_category_results.append(drug)
+                    
+                    # 处理完成
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    # 展示结果
+                    if all_category_results:
+                        st.success(f"✅ 类别分析完成！共扫描 {total_targets} 个靶点，匹配到 {len(all_category_results)} 条上市药物记录")
+                        
+                        # 多维度筛选控件
+                        col_filter1, col_filter2, col_filter3 = st.columns(3)
+                        with col_filter1:
+                            # 获取所有唯一的药物分类
+                            all_drug_classes = sorted(list(set([d["药物分类归属"] for d in all_category_results])))
+                            filter_drug_class = st.multiselect(
+                                "按药物分类筛选", 
+                                options=all_drug_classes, 
+                                default=all_drug_classes
+                            )
+                        with col_filter2:
+                            min_similarity_cat = st.slider(
+                                "最小相似度过滤 (%)", 
+                                50, 100, category_threshold, 5
+                            )
+                        with col_filter3:
+                            # 按PDB ID筛选
+                            all_pdb_ids = sorted(list(set([d["PDB ID"] for d in all_category_results])))
+                            filter_pdb_cat = st.multiselect(
+                                "按PDB ID筛选", 
+                                options=all_pdb_ids, 
+                                default=all_pdb_ids
+                            )
+                        
+                        # 过滤结果
+                        result_df = pd.DataFrame(all_category_results)
+                        filtered_df = result_df[
+                            (result_df["药物分类归属"].isin(filter_drug_class)) & 
+                            (result_df["相似度(%)"] >= min_similarity_cat) &
+                            (result_df["PDB ID"].isin(filter_pdb_cat))
+                        ].sort_values(by=["相似度(%)"], ascending=False)
+                        
+                        # 重新排列列顺序，让信息更清晰
+                        column_order = [
+                            "RNA类别", "PDB ID", "配体ID", "RNA结构描述",
+                            "药物名称", "药物分类归属", "治疗适应症", 
+                            "相似度(%)", "分子量", "ChEMBL ID"
+                        ]
+                        filtered_df = filtered_df[column_order]
+                        
+                        # 展示表格
+                        st.dataframe(filtered_df, use_container_width=True)
+                        
+                        # 统计信息
+                        st.divider()
+                        st.subheader("📈 类别分析统计")
+                        col_stat1, col_stat2, col_stat3 = st.columns(3)
+                        with col_stat1:
+                            st.metric("分析靶点总数", total_targets)
+                        with col_stat2:
+                            st.metric("匹配药物总数", len(all_category_results))
+                        with col_stat3:
+                            st.metric("唯一药物数量", filtered_df["药物名称"].nunique())
+                        
+                        # 下载按钮
+                        st.download_button(
+                            label=f"📥 下载 {selected_rna_category} 完整分析结果 (CSV)",
+                            data=filtered_df.to_csv(index=False, encoding='utf-8-sig'),
+                            file_name=f"RNA_AIDD_{selected_rna_category}_完整分析结果.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                    else:
+                        st.warning(f"🔍 类别分析完成。{selected_rna_category} 类别下未匹配到符合条件的上市药物")
 
 except Exception as e:
     st.error(f"系统运行异常: {e}")
