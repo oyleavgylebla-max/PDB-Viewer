@@ -38,16 +38,19 @@ def load_and_process_data():
     return df
 
 # --- 新增 AIDD 功能函数 ---
+# --- 新增 AIDD 功能函数 ---
 @st.cache_data
 def get_smiles_from_pdb(ligand_id):
-    """从 PDB 数据库获取分子的 SMILES 表达式"""
+    """从 PDB 数据库获取分子的 SMILES 表达式 (增强版)"""
     try:
         url = f"https://data.rcsb.org/rest/v1/core/chemcomp/{ligand_id}"
         r = requests.get(url, timeout=5)
         if r.status_code == 200:
             data = r.json()
             for desc in data.get("rcsb_chem_comp_descriptor", []):
-                if desc.get("type") == "SMILES":
+                # 💡 核心修复：只要标签类型包含 "SMILES" 就能成功抓取
+                desc_type = desc.get("type", "").upper()
+                if "SMILES" in desc_type:
                     return desc.get("descriptor")
     except:
         return None
