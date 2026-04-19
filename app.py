@@ -12,13 +12,14 @@ from functools import lru_cache
 
 # =============================================================================
 # 🧬 RNA 结构精细化分类与 AIDD 药物重定位平台
-# 版本: 2.1 (新增 RNA-疾病关联预测功能)
+# 版本: 2.1.1 (修复语法错误)
 # 更新日志:
 #   - 修复 SMILES 抓取失败问题 (7个数据源 + 自动重试)
 #   - 添加本地 JSON 缓存机制
 #   - 更新 PDBe/RCSB API 至最新 v2 版本
 #   - 优化 ChEMBL 搜索过滤 (排除撤市药物)
-#   - ✨ 新增 RNA 靶点-疾病关联预测功能
+#   - 新增 RNA 靶点-疾病关联预测功能
+#   - 修复第341行未终止字符串的语法错误
 # =============================================================================
 
 # --- 🔧 全局配置与缓存系统 ---
@@ -202,7 +203,7 @@ def search_chembl_drugs(smiles, similarity_threshold):
     except Exception as e:
         return [], f"检索超时或异常: {str(e)}", 0
 
-# --- 🩺 新增：RNA 靶点-疾病关联预测引擎 ---
+# --- 🩺 RNA 靶点-疾病关联预测引擎 ---
 @st.cache_data(ttl=86400, show_spinner=False)
 @lru_cache(maxsize=500)
 def predict_rna_diseases(pdb_id, description, ligand_id):
@@ -338,7 +339,8 @@ try:
     category_list = ["全部 (All)"] + sorted(df['Category'].unique().tolist())
     selected_cat = st.sidebar.selectbox("选择 RNA 类型", category_list)
     
-    f_df = df if selected_cat == "全部" (All) else df[df['Category'] == selected_cat]
+    # 修复了这里的语法错误：添加了缺失的双引号
+    f_df = df if selected_cat == "全部 (All)" else df[df['Category'] == selected_cat]
     f_df = f_df.sort_values(by=['MainLigandID', 'PDB ID'])
 
     # ==========================================
@@ -397,7 +399,7 @@ try:
                 st.error(f"3D 结构加载失败: {e}")
 
         # ==========================================
-        # 🩺 新增：RNA-疾病关联预测
+        # 🩺 RNA-疾病关联预测
         # ==========================================
         st.divider()
         st.subheader("🩺 RNA 靶点-疾病关联预测")
