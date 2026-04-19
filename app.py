@@ -209,4 +209,4 @@ try:
                 st.warning("由于 API 限制，暂时无法获取此配体的化学码 (SMILES)，分析中止。")
 
 except Exception as e:
-    st.error(f"网页运行中发生错误: {e}"))
+    st.error(f"网页运行中发生错误: {e}")
