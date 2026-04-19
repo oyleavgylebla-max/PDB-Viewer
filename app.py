@@ -4,7 +4,7 @@ import py3Dmol
 from stmol import showmol
 
 # 1. 网页配置
-st.set_page_config(page_title="PDB Riboswitch 可视化平台", layout="wide")
+st.set_page_config(page_title="PDB RNA 结构可视化平台", layout="wide")
 st.title("🧬 PDB 结构分类与可视化分析")
 
 @st.cache_data
@@ -12,19 +12,19 @@ def load_and_process_data():
     # 读取表格
     df = pd.read_excel("PDB_Dataset_Info_Full.xlsx")
     
-    # --- 新增分类逻辑 ---
+    # --- 精细化分类逻辑 ---
     def categorize(desc):
-    desc_lower = str(desc).lower()
-    if 'riboswitch' in desc_lower:
-        return "核糖开关 (Riboswitch)"
-    elif 'aptamer' in desc_lower:
-        return "适配体 (Aptamer)"
-    elif any(word in desc_lower for word in ['ribozyme', 'ribosomal', 'ribosome']):
-        return "催化核酶 (Ribozyme/Ribosomal)"
-    elif any(word in desc_lower for word in ['ires', 'hairpin', 'stem-loop']):
-        return "特殊调控/结构基元 (Special/Motifs)"
-    else:
-        return "其他 RNA 结构 (Other RNA)"
+        desc_lower = str(desc).lower()
+        if 'riboswitch' in desc_lower:
+            return "核糖开关 (Riboswitch)"
+        elif 'aptamer' in desc_lower:
+            return "适配体 (Aptamer)"
+        elif any(word in desc_lower for word in ['ribozyme', 'ribosomal', 'ribosome']):
+            return "催化核酶 (Ribozyme/Ribosomal)"
+        elif any(word in desc_lower for word in ['ires', 'hairpin', 'stem-loop']):
+            return "特殊调控/结构基元 (Special/Motifs)"
+        else:
+            return "其他 RNA 结构 (Other RNA)"
             
     df['Category'] = df['Description (描述)'].apply(categorize)
     return df
@@ -50,7 +50,7 @@ try:
     # 获取选中行数据
     info = df[df['PDB ID'] == selected_pdb].iloc[0]
     
-    # 3. 侧边栏 2D 结构图 (沿用之前的 PDBe 稳定版接口)
+    # 3. 侧边栏 2D 结构图
     st.sidebar.divider()
     st.sidebar.subheader("🧪 小分子 2D 结构式")
     
@@ -84,7 +84,7 @@ try:
 
     with col1:
         st.subheader("详细信息")
-        st.success(f"**分类:** {info['Category']}") # 突出显示分类
+        st.success(f"**结构分类:** {info['Category']}")
         st.info(f"**PDB ID:** {selected_pdb}")
         st.write(f"**描述:** {info['Description (描述)']}")
         st.write(f"**文献:** {info['Publication (文章出处)']}")
