@@ -14,11 +14,17 @@ def load_and_process_data():
     
     # --- 新增分类逻辑 ---
     def categorize(desc):
-        desc_lower = str(desc).lower()
-        if 'riboswitch' in desc_lower:
-            return "核糖开关 (Riboswitch)"
-        else:
-            return "其他结构 (Others)"
+    desc_lower = str(desc).lower()
+    if 'riboswitch' in desc_lower:
+        return "核糖开关 (Riboswitch)"
+    elif 'aptamer' in desc_lower:
+        return "适配体 (Aptamer)"
+    elif any(word in desc_lower for word in ['ribozyme', 'ribosomal', 'ribosome']):
+        return "催化核酶 (Ribozyme/Ribosomal)"
+    elif any(word in desc_lower for word in ['ires', 'hairpin', 'stem-loop']):
+        return "特殊调控/结构基元 (Special/Motifs)"
+    else:
+        return "其他 RNA 结构 (Other RNA)"
             
     df['Category'] = df['Description (描述)'].apply(categorize)
     return df
