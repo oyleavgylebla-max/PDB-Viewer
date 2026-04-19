@@ -4,6 +4,7 @@ import py3Dmol
 from stmol import showmol
 import requests
 import urllib.parse
+import re
 
 # 1. 网页全局配置
 st.set_page_config(page_title="RNA 结构精细化分类与 AIDD 平台", layout="wide")
@@ -14,7 +15,6 @@ def load_and_process_data():
     """加载 Excel 并进行分类与配体预处理"""
     df = pd.read_excel("PDB_Dataset_Info_Full.xlsx")
     
-    # --- RNA 精细化分类逻辑 ---
     def categorize(desc):
         desc_lower = str(desc).lower()
         if 'riboswitch' in desc_lower: return "核糖开关 (Riboswitch)"
@@ -27,7 +27,6 @@ def load_and_process_data():
             
     df['Category'] = df['Description (描述)'].apply(categorize)
     
-    # --- 提取核心配体用于排序 ---
     def get_sort_id(ligand_text):
         if ligand_text == "No ligands" or str(ligand_text) == "nan": return "ZZZ"
         all_l = str(ligand_text).split(' | ')
@@ -40,15 +39,10 @@ def load_and_process_data():
     df['MainLigandID'] = df['Ligands (对应小分子)'].apply(get_sort_id)
     return df
 
-# --- 🚀 AIDD 核心：三引擎自动获取 SMILES (含 PubChem) ---
 @st.cache_data
-def get_smiles_from_all_sources(ligand_id):
-    """依次尝试 PDBe, RCSB, PubChem 获取 SMILES"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    # 1. 尝试欧洲 PDBe
+def get_smiles_from_pdb_ids(ligand_id):
+    """仅通过 ID 尝试 PDBe 和 RCSB 获取 SMILES"""
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
     try:
         url = f"https://www.ebi.ac.uk/pdbe/api/pdb/compound/summary/{ligand_id}"
         r = requests.get(url, headers=headers, timeout=5)
@@ -61,7 +55,6 @@ def get_smiles_from_all_sources(ligand_id):
                 if smiles_list: return smiles_list[0].get("value")
     except: pass
 
-    # 2. 尝试美国 RCSB PDB
     try:
         url = f"https://data.rcsb.org/rest/v1/core/chemcomp/{ligand_id}"
         r = requests.get(url, headers=headers, timeout=5)
@@ -70,26 +63,31 @@ def get_smiles_from_all_sources(ligand_id):
             for desc in data.get("rcsb_chem_comp_descriptor", []):
                 if "SMILES" in desc.get("type", "").upper(): return desc.get("descriptor")
     except: pass
+    return None
 
-    # 3. 🚀 强力后援：PubChem 数据库
+# --- 🚀 新增：PubChem 全名专属检索引擎 ---
+@st.cache_data
+def get_smiles_from_pubchem_name(name):
+    """通过小分子全名在 PubChem 中搜索 SMILES"""
+    if not name or str(name).strip() == "": return None
+    # 将化学名转化为安全的 URL 格式 (处理括号、加减号等)
+    safe_name = urllib.parse.quote(str(name).strip())
+    pub_url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{safe_name}/property/CanonicalSMILES/JSON"
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        # 使用配体 ID 作为名称搜索
-        pub_url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{ligand_id}/property/CanonicalSMILES/JSON"
-        r = requests.get(pub_url, headers=headers, timeout=5)
+        r = requests.get(pub_url, headers=headers, timeout=10)
         if r.status_code == 200:
             p_data = r.json()
             smiles = p_data.get("PropertyTable", {}).get("Properties", [{}])[0].get("CanonicalSMILES")
-            if smiles: return smiles
+            return smiles
     except: pass
-
     return None
 
 def search_chembl_drugs(smiles, similarity_threshold):
-    """在 ChEMBL 中搜索相似 FDA 药物"""
-    if not smiles or str(smiles).strip() == "": return [], "SMILES 序列为空"
+    if not smiles or str(smiles).strip() == "": return [], "SMILES为空"
     safe_smiles = urllib.parse.quote(str(smiles).strip())
     url = f"https://www.ebi.ac.uk/chembl/api/data/similarity/{safe_smiles}/{similarity_threshold}.json"
-    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "Accept": "application/json"}
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
     try:
         r = requests.get(url, headers=headers, timeout=25)
         if r.status_code == 200:
@@ -105,8 +103,8 @@ def search_chembl_drugs(smiles, similarity_threshold):
                         "分子量": m.get('molecule_properties', {}).get('full_mwt', 'N/A')
                     })
             return drugs, "Success"
-        else: return [], f"ChEMBL 数据库暂时无法访问 (状态码: {r.status_code})"
-    except: return [], "检索超时，请稍后重试"
+        else: return [], f"接口被拒 (状态码: {r.status_code})"
+    except: return [], "检索超时"
 
 # --- 主程序逻辑 ---
 try:
@@ -125,7 +123,7 @@ try:
         filtered_df = df[df['Category'] == selected_cat].sort_values(by=['MainLigandID', 'PDB ID'])
 
     if view_mode == "📊 同类全局对比 (画廊)":
-        st.subheader(f"当前视图: {selected_cat} (已按配体排序)")
+        st.subheader(f"当前视图: {selected_cat}")
         cols = st.columns(4)
         for idx, row in filtered_df.reset_index().iterrows():
             pdb_id, target_id, desc = row['PDB ID'], row['MainLigandID'], row['Description (描述)']
@@ -168,23 +166,44 @@ try:
             st.divider()
             st.subheader("💊 AIDD 靶点与药物重定位分析")
             
-            # 自动抓取 SMILES (三引擎驱动)
-            with st.spinner(f"正在多源检索 {target_id} 的化学编码..."):
-                auto_smiles = get_smiles_from_all_sources(target_id)
+            # 1. 后台悄悄用 ID 去尝试 PDB 抓取
+            auto_smiles = get_smiles_from_pdb_ids(target_id)
             
-            if not auto_smiles:
-                st.warning(f"⚠️ 自动抓取失败。PDB 与 PubChem 库中均未找到 {target_id} 的规范 SMILES。")
+            # 2. 无论成败，提取全名展示在界面上
+            raw_ligand_str = str(info['Ligands (对应小分子)'])
+            # 去除短码、竖线、逗号，提取纯净的化学全名
+            name_guess = raw_ligand_str.replace(target_id, "").replace("|", "").replace(";", "").strip()
             
-            smiles = st.text_input("🧬 配体 SMILES (支持自动抓取结果/手动覆盖):", value=auto_smiles if auto_smiles else "")
+            st.write("### 🪪 数据库全名搜寻通道")
+            st.info("如果你知道它的全名（或者系统从表格中提取了全名），可以直接一键去 PubChem 大数据库中查询！")
+            
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                input_name = st.text_input("确认或修改小分子全名:", value=name_guess)
+            with c2:
+                st.write("")
+                st.write("")
+                if st.button("🌐 去 PubChem 搜全名", use_container_width=True):
+                    with st.spinner(f"正在 PubChem 中检索 '{input_name}' 的化学编码..."):
+                        pub_smiles = get_smiles_from_pubchem_name(input_name)
+                        if pub_smiles:
+                            auto_smiles = pub_smiles # 搜到了就覆盖掉
+                            st.success(f"🎉 PubChem 检索成功！SMILES 已填入下方。")
+                        else:
+                            st.error(f"❌ PubChem 库中未查找到全名为 '{input_name}' 的分子，你可以尝试精简一下名字。")
+
+            st.write("---")
+            # --- 最终进行跨靶点搜索的区域 ---
+            smiles = st.text_input("🧬 最终用于靶点匹配的 SMILES 序列:", value=auto_smiles if auto_smiles else "")
             
             if smiles:
-                c1, c2 = st.columns([2, 1])
-                with c1:
+                c3, c4 = st.columns([2, 1])
+                with c3:
                     sim_threshold = st.slider("Tanimoto 相似度阈值 (%)", 70, 100, 70, 5)
-                with c2:
+                with c4:
                     st.write("")
                     st.write("")
-                    if st.button("🚀 开始跨靶点搜索", use_container_width=True):
+                    if st.button("🚀 开始跨靶点搜索 (ChEMBL)", use_container_width=True):
                         with st.spinner("正在扫描 ChEMBL 上市药物库..."):
                             fda_drugs, msg = search_chembl_drugs(smiles, sim_threshold)
                             if fda_drugs:
