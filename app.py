@@ -11,10 +11,8 @@ st.title("🧬 RNA 靶点分类 & AIDD 药物重定位系统")
 
 @st.cache_data
 def load_and_process_data():
-    """加载 Excel 并进行分类与配体预处理"""
     df = pd.read_excel("PDB_Dataset_Info_Full.xlsx")
     
-    # --- RNA 精细化分类逻辑 ---
     def categorize(desc):
         desc_lower = str(desc).lower()
         if 'riboswitch' in desc_lower: return "核糖开关 (Riboswitch)"
@@ -27,11 +25,9 @@ def load_and_process_data():
             
     df['Category'] = df['Description (描述)'].apply(categorize)
     
-    # --- 提取核心配体用于“相似性排序” ---
     def get_sort_id(ligand_text):
         if ligand_text == "No ligands" or str(ligand_text) == "nan": return "ZZZ"
         all_l = str(ligand_text).split(' | ')
-        # 扩充版黑名单：过滤离子与结晶辅料
         ions = [
             'MG', 'NA', 'K', 'CL', 'SO4', 'PO4', 'NCO', 'CD', 'ZN', 'CA', 
             'HG', 'FE', 'MN', 'CU', 'CO', 'BA', 'SR', 'RB', 'CS', 'LI', 'TL',
@@ -46,16 +42,12 @@ def load_and_process_data():
     df['MainLigandID'] = df['Ligands (对应小分子)'].apply(get_sort_id)
     return df
 
-# --- AIDD 功能：获取 SMILES (带浏览器伪装版) ---
 @st.cache_data
 def get_smiles_from_pdb(ligand_id):
-    """从 PDB/PDBe 数据库获取分子的 SMILES，绕过防火墙拦截"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json"
     }
-    
-    # 优先尝试：欧洲 PDBe 接口
     try:
         pdbe_url = f"https://www.ebi.ac.uk/pdbe/api/pdb/compound/summary/{ligand_id}"
         r = requests.get(pdbe_url, headers=headers, timeout=5)
@@ -67,8 +59,6 @@ def get_smiles_from_pdb(ligand_id):
                     if s.get("name") == "canonical": return s.get("value")
                 if smiles_list: return smiles_list[0].get("value")
     except: pass 
-        
-    # 备用尝试：美国 RCSB 接口
     try:
         rcsb_url = f"https://data.rcsb.org/rest/v1/core/chemcomp/{ligand_id}"
         r = requests.get(rcsb_url, headers=headers, timeout=5)
@@ -80,9 +70,9 @@ def get_smiles_from_pdb(ligand_id):
     return None
 
 def search_chembl_drugs(smiles, similarity_threshold):
-    """在 ChEMBL 中搜索相似的 FDA 批准上市药物 (带伪装防封锁)"""
+    """【Debug升级版】返回数据和具体的错误信息"""
     if not smiles or str(smiles).strip() == "":
-        return []
+        return [], "SMILES序列为空"
         
     safe_smiles = urllib.parse.quote(str(smiles).strip())
     url = f"https://www.ebi.ac.uk/chembl/api/data/similarity/{safe_smiles}/{similarity_threshold}.json"
@@ -93,28 +83,33 @@ def search_chembl_drugs(smiles, similarity_threshold):
     }
     
     try:
-        r = requests.get(url, headers=headers, timeout=15)
+        # 将超时时间放宽到了 25 秒
+        r = requests.get(url, headers=headers, timeout=25)
         if r.status_code == 200:
             mols = r.json().get('molecules', [])
             drugs = []
             for m in mols:
-                if m.get('max_phase') == 4 and m.get('pref_name'):
+                # 放宽 max_phase 的判断条件，防止数据格式异常
+                phase = m.get('max_phase', 0)
+                if phase and float(phase) >= 4.0 and m.get('pref_name'):
                     drugs.append({
                         "药物名称 (Drug)": m.get('pref_name'),
                         "ChEMBL ID": m.get('molecule_chembl_id'),
                         "相似度 (%)": m.get('similarity', 'N/A'),
                         "分子量": m.get('molecule_properties', {}).get('full_mwt', 'N/A')
                     })
-            return drugs
-    except Exception:
-        return []
-    return []
+            return drugs, "Success"
+        else:
+            return [], f"API 拒绝访问，服务器返回状态码: {r.status_code}"
+    except requests.exceptions.Timeout:
+        return [], "请求超时！ChEMBL 数据库计算太慢，超过了25秒限制。"
+    except Exception as e:
+        return [], f"发生未知代码异常: {str(e)}"
 
 # --- 主程序逻辑 ---
 try:
     df = load_and_process_data()
     
-    # 2. 侧边栏
     st.sidebar.header("⚙️ 显示模式")
     view_mode = st.sidebar.radio("模式切换", ["🔍 单体详细查看 & AIDD分析", "📊 同类全局对比 (画廊)"])
     
@@ -123,7 +118,6 @@ try:
     category_list = ["全部 (All)"] + sorted(df['Category'].unique().tolist())
     selected_cat = st.sidebar.selectbox("选择 RNA 类型", category_list)
     
-    # 筛选并排序 (实现相似小分子聚在一块)
     if selected_cat == "全部 (All)":
         filtered_df = df.sort_values(by=['MainLigandID', 'PDB ID'])
     else:
@@ -187,7 +181,7 @@ try:
             showmol(view, height=500, width=800)
 
         # -----------------------------------------
-        # 🚀 AIDD 分析引擎
+        # 🚀 AIDD 分析引擎 (开启 Debug 显示)
         # -----------------------------------------
         if target_id != "ZZZ":
             st.divider()
@@ -195,17 +189,15 @@ try:
             st.write("系统正在尝试寻找与当前 RNA 天然配体相似的 **FDA 已上市药物**...")
             
             auto_smiles = get_smiles_from_pdb(target_id)
-            
             if not auto_smiles:
                 st.warning(f"⚠️ 云端 API 被拦截或 {target_id} 暂无官方 SMILES。")
             
-            # 手动/自动双核驱动输入框
             smiles = st.text_input("🧬 配体 SMILES 序列 (自动抓取/支持手动覆盖):", value=auto_smiles if auto_smiles else "")
             
             if smiles:
                 c1, c2 = st.columns([2, 1])
                 with c1:
-                    sim_threshold = st.slider("Tanimoto 结构相似度阈值 (%)", 50, 100, 70, 5)
+                    sim_threshold = st.slider("Tanimoto 结构相似度阈值 (%)", 70, 100, 70, 5)
                 with c2:
                     st.write("")
                     st.write("")
@@ -215,14 +207,20 @@ try:
                     if not smiles.strip():
                         st.error("❌ SMILES 序列不能为空，请输入有效代码后再搜索！")
                     else:
-                        with st.spinner("正在突破封锁，深入检索 ChEMBL 数据库..."):
-                            fda_drugs = search_chembl_drugs(smiles, sim_threshold)
+                        with st.spinner("正在突破封锁，深入检索 ChEMBL 数据库 (最多可能需要 25 秒)..."):
+                            # 获取数据和调试信息
+                            fda_drugs, msg = search_chembl_drugs(smiles, sim_threshold)
+                            
                             if fda_drugs:
                                 st.success(f"🎉 找到 {len(fda_drugs)} 个相似的 FDA 上市药物！")
                                 st.dataframe(pd.DataFrame(fda_drugs), use_container_width=True)
                                 st.info("💡 **结论建议:** 如果这些老药原本属于其他疗法，它们可能通过相似的结合骨架与该 RNA 靶点结合。")
+                            elif msg == "Success":
+                                # 网络通了，但是真的没搜到这个药
+                                st.warning("🔍 检索成功，但在当前阈值下，没有匹配到任何上市的 FDA 药物。")
                             else:
-                                st.warning("在此阈值下未找到已上市的相似药物。你可以尝试降低相似度阈值 (例如 50%) 再试一次。")
+                                # 彻底失败，打印鲜红的错误信息
+                                st.error(f"🚨 获取数据失败！详细错误原因：{msg}")
             else:
                 st.info("👆 请在上方输入框手动填入该配体的 SMILES 序列后，开始匹配上市药物。")
 
