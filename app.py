@@ -39,22 +39,32 @@ def load_and_process_data():
 
 # --- 新增 AIDD 功能函数 ---
 # --- 新增 AIDD 功能函数 ---
+# --- 新增 AIDD 功能函数 ---
 @st.cache_data
 def get_smiles_from_pdb(ligand_id):
-    """从 PDB 数据库获取分子的 SMILES 表达式 (增强版)"""
+    """从 PDB/PDBe 数据库获取分子的 SMILES (欧洲/美国 双引擎终极版)"""
+    
+    # 🚀 引擎 1：优先尝试欧洲 PDBe 接口 (网络极其稳定，无防盗链拦截)
     try:
-        url = f"https://data.rcsb.org/rest/v1/core/chemcomp/{ligand_id}"
-        r = requests.get(url, timeout=5)
+        pdbe_url = f"https://www.ebi.ac.uk/pdbe/api/pdb/compound/summary/{ligand_id}"
+        r = requests.get(pdbe_url, timeout=5)
         if r.status_code == 200:
             data = r.json()
-            for desc in data.get("rcsb_chem_comp_descriptor", []):
-                # 💡 核心修复：只要标签类型包含 "SMILES" 就能成功抓取
-                desc_type = desc.get("type", "").upper()
-                if "SMILES" in desc_type:
-                    return desc.get("descriptor")
-    except:
-        return None
-    return None
+            if ligand_id in data:
+                smiles_list = data[ligand_id][0].get("smiles", [])
+                # 优先获取 canonical (规范化) SMILES，这对后续药物匹配最准确
+                for s in smiles_list:
+                    if s.get("name") == "canonical":
+                        return s.get("value")
+                # 如果没有 canonical，有什么就拿什么
+                if smiles_list:
+                    return smiles_list[0].get("value")
+    except Exception:
+        pass # 如果失败，不要声张，悄悄进入下一个引擎
+        
+    # 🚀 引擎 2：备用尝试美国 RCSB 接口
+    try:
+        rcsb_url = f"
 
 def search_chembl_drugs(smiles, similarity_threshold):
     """在 ChEMBL 中搜索相似分子，并过滤出 FDA 批准药物 (Max Phase = 4)"""
