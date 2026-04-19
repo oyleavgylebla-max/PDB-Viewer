@@ -338,7 +338,7 @@ try:
     category_list = ["全部 (All)"] + sorted(df['Category'].unique().tolist())
     selected_cat = st.sidebar.selectbox("选择 RNA 类型", category_list)
     
-    f_df = df if selected_cat == "全部“ (All) else df[df['Category'] == selected_cat]
+    f_df = df if selected_cat == "全部" (All) else df[df['Category'] == selected_cat]
     f_df = f_df.sort_values(by=['MainLigandID', 'PDB ID'])
 
     # ==========================================
