@@ -176,8 +176,7 @@ try:
             view.addStyle({'hetflag': True}, {'stick': {'colorscheme': 'greenCarbon', 'radius': 0.3}})
             view.zoomTo()
             showmol(view, height=500, width=800)
-
-        # -----------------------------------------
+# -----------------------------------------
         # 🚀 AIDD 分析引擎
         # -----------------------------------------
         if target_id != "ZZZ":
@@ -185,9 +184,17 @@ try:
             st.subheader("💊 AIDD 靶点与药物重定位分析")
             st.write("系统正在尝试寻找与当前 RNA 天然配体相似的 **FDA 已上市药物**...")
             
-            smiles = get_smiles_from_pdb(target_id)
+            # 自动获取
+            auto_smiles = get_smiles_from_pdb(target_id)
+            
+            # 👑 终极防线：自动获取+手动干预
+            if not auto_smiles:
+                st.warning(f"⚠️ 云端 API 被拦截或 {target_id} 暂无官方 SMILES。")
+            
+            # 提供一个输入框，自动填入抓取结果，抓不到就留空让你手动填！
+            smiles = st.text_input("🧬 配体 SMILES 序列 (自动抓取/支持手动覆盖):", value=auto_smiles if auto_smiles else "")
+            
             if smiles:
-                st.code(f"当前配体 SMILES: {smiles}", language="text")
                 c1, c2 = st.columns([2, 1])
                 with c1:
                     sim_threshold = st.slider("Tanimoto 结构相似度阈值 (%)", 50, 100, 70, 5)
