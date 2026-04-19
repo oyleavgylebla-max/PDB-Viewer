@@ -4,3 +4,5 @@ openpyxl
 py3Dmol
 stmol
 requests
+ipython_genutils
+ipywidgets
