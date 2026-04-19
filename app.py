@@ -12,7 +12,6 @@ st.title("🧬 RNA 靶点分类 & AIDD 药物重定位系统")
 
 @st.cache_data
 def load_and_process_data():
-    """加载 Excel 并进行分类与配体预处理"""
     df = pd.read_excel("PDB_Dataset_Info_Full.xlsx")
     
     def categorize(desc):
@@ -41,7 +40,6 @@ def load_and_process_data():
 
 @st.cache_data
 def get_smiles_from_pdb_ids(ligand_id):
-    """仅通过 ID 尝试 PDBe 和 RCSB 获取 SMILES"""
     headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
     try:
         url = f"https://www.ebi.ac.uk/pdbe/api/pdb/compound/summary/{ligand_id}"
@@ -65,13 +63,17 @@ def get_smiles_from_pdb_ids(ligand_id):
     except: pass
     return None
 
-# --- 🚀 新增：PubChem 全名专属检索引擎 ---
 @st.cache_data
 def get_smiles_from_pubchem_name(name):
-    """通过小分子全名在 PubChem 中搜索 SMILES"""
+    """通过小分子全名在 PubChem 中搜索 SMILES (增加智能清洗)"""
     if not name or str(name).strip() == "": return None
-    # 将化学名转化为安全的 URL 格式 (处理括号、加减号等)
-    safe_name = urllib.parse.quote(str(name).strip())
+    
+    # 💡 智能清洗：剥离前后的方括号和多余空格
+    clean_name = str(name).strip()
+    if clean_name.startswith('[') and clean_name.endswith(']'):
+        clean_name = clean_name[1:-1].strip()
+        
+    safe_name = urllib.parse.quote(clean_name)
     pub_url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{safe_name}/property/CanonicalSMILES/JSON"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -166,40 +168,38 @@ try:
             st.divider()
             st.subheader("💊 AIDD 靶点与药物重定位分析")
             
-            # 1. 后台悄悄用 ID 去尝试 PDB 抓取
             auto_smiles = get_smiles_from_pdb_ids(target_id)
             
-            # 2. 无论成败，提取全名展示在界面上
+            # 提取全名并预先清理方括号
             raw_ligand_str = str(info['Ligands (对应小分子)'])
-            # 去除短码、竖线、逗号，提取纯净的化学全名
             name_guess = raw_ligand_str.replace(target_id, "").replace("|", "").replace(";", "").strip()
+            if name_guess.startswith('[') and name_guess.endswith(']'):
+                name_guess = name_guess[1:-1].strip()
             
             st.write("### 🪪 数据库全名搜寻通道")
-            st.info("如果你知道它的全名（或者系统从表格中提取了全名），可以直接一键去 PubChem 大数据库中查询！")
-            
             c1, c2 = st.columns([3, 1])
             with c1:
-                input_name = st.text_input("确认或修改小分子全名:", value=name_guess)
+                input_name = st.text_input("小分子全名 (已自动去除干扰符号):", value=name_guess)
             with c2:
                 st.write("")
                 st.write("")
                 if st.button("🌐 去 PubChem 搜全名", use_container_width=True):
-                    with st.spinner(f"正在 PubChem 中检索 '{input_name}' 的化学编码..."):
+                    with st.spinner(f"正在检索 '{input_name}'..."):
                         pub_smiles = get_smiles_from_pubchem_name(input_name)
                         if pub_smiles:
-                            auto_smiles = pub_smiles # 搜到了就覆盖掉
-                            st.success(f"🎉 PubChem 检索成功！SMILES 已填入下方。")
+                            auto_smiles = pub_smiles
+                            st.success("🎉 PubChem 检索成功！")
                         else:
-                            st.error(f"❌ PubChem 库中未查找到全名为 '{input_name}' 的分子，你可以尝试精简一下名字。")
+                            st.error("❌ 未查找到该分子，可能是命名格式依然不被 API 兼容。")
 
             st.write("---")
-            # --- 最终进行跨靶点搜索的区域 ---
             smiles = st.text_input("🧬 最终用于靶点匹配的 SMILES 序列:", value=auto_smiles if auto_smiles else "")
             
             if smiles:
                 c3, c4 = st.columns([2, 1])
                 with c3:
-                    sim_threshold = st.slider("Tanimoto 相似度阈值 (%)", 70, 100, 70, 5)
+                    # 💡 阈值范围改回 50 到 100
+                    sim_threshold = st.slider("Tanimoto 相似度阈值 (%)", 50, 100, 70, 5)
                 with c4:
                     st.write("")
                     st.write("")
@@ -210,7 +210,7 @@ try:
                                 st.success(f"🎉 找到 {len(fda_drugs)} 个相似的 FDA 批准药物！")
                                 st.dataframe(pd.DataFrame(fda_drugs), use_container_width=True)
                             elif msg == "Success":
-                                st.warning("🔍 检索成功，但未匹配到相似度足够高的上市药物。")
+                                st.warning("🔍 检索成功，但在当前阈值下未匹配到上市药物。")
                             else:
                                 st.error(f"🚨 错误: {msg}")
 
