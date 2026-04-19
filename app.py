@@ -12,7 +12,6 @@ st.title("🧬 RNA 靶点分类 & AIDD 药物重定位系统")
 @st.cache_data
 def load_and_process_data():
     """加载 Excel 并进行分类与配体预处理"""
-    # 请确保该文件名与 GitHub 上的文件名完全一致
     df = pd.read_excel("PDB_Dataset_Info_Full.xlsx")
     
     # --- RNA 精细化分类逻辑 ---
@@ -56,7 +55,7 @@ def get_smiles_from_pdb(ligand_id):
         "Accept": "application/json"
     }
     
-    # 优先：欧洲 PDBe 接口
+    # 优先尝试：欧洲 PDBe 接口
     try:
         pdbe_url = f"https://www.ebi.ac.uk/pdbe/api/pdb/compound/summary/{ligand_id}"
         r = requests.get(pdbe_url, headers=headers, timeout=5)
@@ -69,7 +68,7 @@ def get_smiles_from_pdb(ligand_id):
                 if smiles_list: return smiles_list[0].get("value")
     except: pass 
         
-    # 备用：美国 RCSB 接口
+    # 备用尝试：美国 RCSB 接口
     try:
         rcsb_url = f"https://data.rcsb.org/rest/v1/core/chemcomp/{ligand_id}"
         r = requests.get(rcsb_url, headers=headers, timeout=5)
@@ -81,11 +80,20 @@ def get_smiles_from_pdb(ligand_id):
     return None
 
 def search_chembl_drugs(smiles, similarity_threshold):
-    """在 ChEMBL 中搜索相似的 FDA 批准上市药物"""
-    safe_smiles = urllib.parse.quote(smiles)
+    """在 ChEMBL 中搜索相似的 FDA 批准上市药物 (带伪装防封锁)"""
+    if not smiles or str(smiles).strip() == "":
+        return []
+        
+    safe_smiles = urllib.parse.quote(str(smiles).strip())
     url = f"https://www.ebi.ac.uk/chembl/api/data/similarity/{safe_smiles}/{similarity_threshold}.json"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+    
     try:
-        r = requests.get(url, headers={"Accept": "application/json"}, timeout=15)
+        r = requests.get(url, headers=headers, timeout=15)
         if r.status_code == 200:
             mols = r.json().get('molecules', [])
             drugs = []
@@ -98,7 +106,8 @@ def search_chembl_drugs(smiles, similarity_threshold):
                         "分子量": m.get('molecule_properties', {}).get('full_mwt', 'N/A')
                     })
             return drugs
-    except: return []
+    except Exception:
+        return []
     return []
 
 # --- 主程序逻辑 ---
@@ -176,7 +185,8 @@ try:
             view.addStyle({'hetflag': True}, {'stick': {'colorscheme': 'greenCarbon', 'radius': 0.3}})
             view.zoomTo()
             showmol(view, height=500, width=800)
-# -----------------------------------------
+
+        # -----------------------------------------
         # 🚀 AIDD 分析引擎
         # -----------------------------------------
         if target_id != "ZZZ":
@@ -184,14 +194,12 @@ try:
             st.subheader("💊 AIDD 靶点与药物重定位分析")
             st.write("系统正在尝试寻找与当前 RNA 天然配体相似的 **FDA 已上市药物**...")
             
-            # 自动获取
             auto_smiles = get_smiles_from_pdb(target_id)
             
-            # 👑 终极防线：自动获取+手动干预
             if not auto_smiles:
                 st.warning(f"⚠️ 云端 API 被拦截或 {target_id} 暂无官方 SMILES。")
             
-            # 提供一个输入框，自动填入抓取结果，抓不到就留空让你手动填！
+            # 手动/自动双核驱动输入框
             smiles = st.text_input("🧬 配体 SMILES 序列 (自动抓取/支持手动覆盖):", value=auto_smiles if auto_smiles else "")
             
             if smiles:
@@ -204,16 +212,19 @@ try:
                     search_btn = st.button("🚀 开始跨靶点搜索", use_container_width=True)
                 
                 if search_btn:
-                    with st.spinner("正在检索 ChEMBL 数据库..."):
-                        fda_drugs = search_chembl_drugs(smiles, sim_threshold)
-                        if fda_drugs:
-                            st.success(f"🎉 找到 {len(fda_drugs)} 个相似的 FDA 上市药物！")
-                            st.dataframe(pd.DataFrame(fda_drugs), use_container_width=True)
-                            st.info("💡 **结论建议:** 如果这些老药原本属于其他疗法，它们可能通过相似的结合骨架与该 RNA 靶点结合。")
-                        else:
-                            st.warning("在此阈值下未找到已上市的相似药物。可以尝试降低阈值。")
+                    if not smiles.strip():
+                        st.error("❌ SMILES 序列不能为空，请输入有效代码后再搜索！")
+                    else:
+                        with st.spinner("正在突破封锁，深入检索 ChEMBL 数据库..."):
+                            fda_drugs = search_chembl_drugs(smiles, sim_threshold)
+                            if fda_drugs:
+                                st.success(f"🎉 找到 {len(fda_drugs)} 个相似的 FDA 上市药物！")
+                                st.dataframe(pd.DataFrame(fda_drugs), use_container_width=True)
+                                st.info("💡 **结论建议:** 如果这些老药原本属于其他疗法，它们可能通过相似的结合骨架与该 RNA 靶点结合。")
+                            else:
+                                st.warning("在此阈值下未找到已上市的相似药物。你可以尝试降低相似度阈值 (例如 50%) 再试一次。")
             else:
-                st.warning("由于 API 限制，暂时无法获取此配体的化学码 (SMILES)，分析中止。")
+                st.info("👆 请在上方输入框手动填入该配体的 SMILES 序列后，开始匹配上市药物。")
 
 except Exception as e:
     st.error(f"网页运行中发生错误: {e}")
