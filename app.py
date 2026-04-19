@@ -9,10 +9,8 @@ st.title("🧬 PDB 结构分类与可视化分析")
 
 @st.cache_data
 def load_and_process_data():
-    # 读取表格
     df = pd.read_excel("PDB_Dataset_Info_Full.xlsx")
     
-    # --- 精细化分类逻辑 ---
     def categorize(desc):
         desc_lower = str(desc).lower()
         if 'riboswitch' in desc_lower:
@@ -35,7 +33,14 @@ def get_ligand_img_url(ligand_text):
         return None
     
     all_ligands = str(ligand_text).split(' | ')
-    ions = ['MG', 'NA', 'K', 'CL', 'SO4', 'PO4', 'NCO', 'CD', 'ZN', 'CA', 'HG', 'FE', 'MN', 'CU', 'CO', 'BA']
+    
+    # 🚀 扩充版黑名单：涵盖金属离子、卤素、常见结晶辅料和缓冲液成分
+    ions = [
+        'MG', 'NA', 'K', 'CL', 'SO4', 'PO4', 'NCO', 'CD', 'ZN', 'CA', 
+        'HG', 'FE', 'MN', 'CU', 'CO', 'BA', 'SR', 'RB', 'CS', 'LI', 'TL', # 金属与碱土
+        'BR', 'I', 'F', 'IOD', 'FLC', # 卤素离子
+        'NO3', 'NH4', 'ACT', 'FMT', 'EDO', 'GOL', 'PEG', 'DTT', 'BME', 'GOL' # 结晶溶剂/缓冲液
+    ]
     
     target_id = None
     for l in all_ligands:
@@ -43,6 +48,8 @@ def get_ligand_img_url(ligand_text):
         if lid not in ions:
             target_id = lid
             break
+            
+    # 如果找了一圈全是黑名单里的东西，说明可能真的是个只结合金属的结构
     if not target_id:
         target_id = all_ligands[0].strip().split(' ')[0].upper()
         
@@ -54,13 +61,11 @@ try:
     # 2. 侧边栏菜单设计
     st.sidebar.header("⚙️ 查看设置")
     
-    # 💡 新增：视图模式切换！
     view_mode = st.sidebar.radio("选择显示模式", ["🔍 单体详细查看 (3D)", "📊 同类全局对比 (2D画廊)"])
     
     st.sidebar.divider()
     st.sidebar.header("🔍 数据筛选")
     
-    # 分类筛选
     category_list = ["全部 (All)"] + sorted(df['Category'].unique().tolist())
     selected_cat = st.sidebar.selectbox("选择结构分类", category_list)
     
@@ -75,13 +80,11 @@ try:
     if view_mode == "📊 同类全局对比 (2D画廊)":
         st.subheader(f"当前分类: {selected_cat} (共 {len(filtered_df)} 个结构)")
         
-        # 1. 先放一个完整的数据表，方便复制和全览
         with st.expander("📝 展开查看完整数据表格"):
             st.dataframe(filtered_df[['PDB ID', 'Description (描述)', 'Ligands (对应小分子)']], use_container_width=True)
         
         st.write("### 🖼️ 核心配体对比画廊")
         
-        # 2. 用 Streamlit 的 columns 生成网格 (每行放 4 个)
         cols_per_row = 4
         columns = st.columns(cols_per_row)
         
@@ -95,7 +98,6 @@ try:
             target_id = get_ligand_img_url(ligand_text)
             
             with columns[col_idx]:
-                # 使用 HTML 画一个小卡片
                 if target_id:
                     img_url = f"https://www.ebi.ac.uk/pdbe/static/files/pdbechem_v2/{target_id}_400.svg"
                     img_html = f'<img src="{img_url}" style="width:100%; height:150px; object-fit:contain; margin-bottom:10px;">'
