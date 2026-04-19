@@ -37,14 +37,11 @@ def load_and_process_data():
     df['MainLigandID'] = df['Ligands (对应小分子)'].apply(get_sort_id)
     return df
 
-# --- 新增 AIDD 功能函数 ---
-# --- 新增 AIDD 功能函数 ---
-# --- 新增 AIDD 功能函数 ---
+# --- AIDD 功能函数：双引擎获取 SMILES ---
 @st.cache_data
 def get_smiles_from_pdb(ligand_id):
     """从 PDB/PDBe 数据库获取分子的 SMILES (欧洲/美国 双引擎终极版)"""
-    
-    # 🚀 引擎 1：优先尝试欧洲 PDBe 接口 (网络极其稳定，无防盗链拦截)
+    # 🚀 引擎 1：优先尝试欧洲 PDBe 接口
     try:
         pdbe_url = f"https://www.ebi.ac.uk/pdbe/api/pdb/compound/summary/{ligand_id}"
         r = requests.get(pdbe_url, timeout=5)
@@ -52,30 +49,36 @@ def get_smiles_from_pdb(ligand_id):
             data = r.json()
             if ligand_id in data:
                 smiles_list = data[ligand_id][0].get("smiles", [])
-                # 优先获取 canonical (规范化) SMILES，这对后续药物匹配最准确
                 for s in smiles_list:
                     if s.get("name") == "canonical":
                         return s.get("value")
-                # 如果没有 canonical，有什么就拿什么
                 if smiles_list:
                     return smiles_list[0].get("value")
     except Exception:
-        pass # 如果失败，不要声张，悄悄进入下一个引擎
+        pass 
         
     # 🚀 引擎 2：备用尝试美国 RCSB 接口
     try:
-        rcsb_url = f"
+        rcsb_url = f"https://data.rcsb.org/rest/v1/core/chemcomp/{ligand_id}"
+        r = requests.get(rcsb_url, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            for desc in data.get("rcsb_chem_comp_descriptor", []):
+                if "SMILES" in desc.get("type", "").upper():
+                    return desc.get("descriptor")
+    except Exception:
+        pass
+        
+    return None
 
 def search_chembl_drugs(smiles, similarity_threshold):
     """在 ChEMBL 中搜索相似分子，并过滤出 FDA 批准药物 (Max Phase = 4)"""
     safe_smiles = urllib.parse.quote(smiles)
-    # ChEMBL 相似度 API
     url = f"https://www.ebi.ac.uk/chembl/api/data/similarity/{safe_smiles}/{similarity_threshold}.json"
     try:
         r = requests.get(url, headers={"Accept": "application/json"}, timeout=15)
         if r.status_code == 200:
             mols = r.json().get('molecules', [])
-            # 过滤：只要临床 4 期（已上市药物），且有名字的
             drugs = []
             for m in mols:
                 if m.get('max_phase') == 4 and m.get('pref_name'):
@@ -83,7 +86,7 @@ def search_chembl_drugs(smiles, similarity_threshold):
                         "药物名称 (Drug)": m.get('pref_name'),
                         "ChEMBL ID": m.get('molecule_chembl_id'),
                         "相似度 (%)": m.get('similarity', 'N/A'),
-                        "分子式": m.get('molecule_properties', {}).get('full_mwt', 'N/A')
+                        "分子量": m.get('molecule_properties', {}).get('full_mwt', 'N/A')
                     })
             return drugs
     except:
@@ -107,7 +110,7 @@ try:
         filtered_df = df[df['Category'] == selected_cat].sort_values(by=['MainLigandID', 'PDB ID'])
 
     # ==========================================
-    # 模式 B：同类全局对比 (画廊模式) - 保持不变
+    # 模式 B：同类全局对比 (画廊模式)
     # ==========================================
     if view_mode == "📊 同类全局对比 (画廊)":
         st.subheader(f"当前视图: {selected_cat} (已按配体相似性排序)")
@@ -165,29 +168,25 @@ try:
             showmol(view, height=450, width=800)
 
         # -----------------------------------------
-        # 🚀 新增模块：AIDD 药物重定位分析
+        # 🚀 AIDD 药物重定位分析
         # -----------------------------------------
         if target_id != "ZZZ":
             st.divider()
             st.subheader("💊 AIDD 靶点与药物重定位分析 (Drug Repurposing)")
             st.write("利用 ChEMBL 数据库，寻找与当前 RNA 天然配体结构相似的 **FDA 已批准上市药物**。")
             
-            # 1. 提取 SMILES
             smiles = get_smiles_from_pdb(target_id)
             if smiles:
                 st.code(f"天然配体 SMILES: {smiles}", language="text")
                 
-                # 2. 设置相似度阈值和搜索按钮
                 c1, c2 = st.columns([2, 1])
                 with c1:
-                    sim_threshold = st.slider("Tanimoto 结构相似度阈值 (%)", min_value=50, max_value=100, value=70, step=5, 
-                                            help=">80% 通常具有高度相似活性。调低至 50% 可以发现更多潜在的跨靶点母核结构。")
+                    sim_threshold = st.slider("Tanimoto 结构相似度阈值 (%)", min_value=50, max_value=100, value=70, step=5)
                 with c2:
-                    st.write("") # 占位对齐
+                    st.write("")
                     st.write("")
                     search_btn = st.button("🚀 搜索相似 FDA 药物", use_container_width=True)
                 
-                # 3. 执行搜索
                 if search_btn:
                     with st.spinner(f"正在扫描 ChEMBL 数据库 (寻找相似度 > {sim_threshold}% 的上市药物)..."):
                         fda_drugs = search_chembl_drugs(smiles, sim_threshold)
@@ -195,11 +194,11 @@ try:
                         if fda_drugs:
                             st.success(f"🎉 发现 {len(fda_drugs)} 个相似的 FDA 批准药物！")
                             st.dataframe(pd.DataFrame(fda_drugs), use_container_width=True)
-                            st.info("💡 **科研洞察:** 如果以上药物原本是治疗某疾病的（如抗癌、抗菌），说明该小分子可能通过脱靶效应结合了当前的 RNA 结构；或者，这个 RNA 本身就是该疾病的潜在治疗靶点！")
+                            st.info("💡 **科研洞察:** 这些老药可能通过脱靶效应结合了当前的 RNA 结构。")
                         else:
                             st.warning(f"在相似度 > {sim_threshold}% 的条件下，未找到已上市的相似药物。你可以尝试调低相似度阈值。")
             else:
-                st.warning("无法从 PDB 数据库获取该配体的 SMILES 序列，分析中止。")
+                st.warning("无法从 PDB/PDBe 数据库获取该配体的 SMILES 序列，分析中止。")
 
 except Exception as e:
     st.error(f"运行出错: {e}")
