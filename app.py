@@ -8,6 +8,7 @@ import time
 import json
 import os
 from functools import lru_cache
+
 # =============================================================================
 # 🧬 RNA 结构精细化分类与 AIDD 药物重定位平台
 # 版本: 3.4 (作用域Bug修复版)
@@ -16,14 +17,18 @@ from functools import lru_cache
 #   - 新增tRNA(转运RNA)独立分类
 #   - 修复含riboswitch scaffold的miRNA被错误分类问题
 #   - 所有297个PDB ID分类100%准确
+#   - 【新增】特异性病原体靶标挖掘模块
 # =============================================================================
+
 # --- 🔧 全局配置与缓存系统 ---
 st.set_page_config(page_title="RNA 结构与 AIDD 药物重定位平台", layout="wide")
 st.title("🧬 RNA 靶点分类 & AIDD 药物重定位系统")
+
 # 本地缓存文件路径
 SMILES_CACHE_FILE = "smiles_cache.json"
 DISEASE_CACHE_FILE = "disease_cache.json"
 DRUG_SEARCH_CACHE_FILE = "drug_search_cache.json"
+
 # --------------------------
 # 完整ATC二级分类字典
 # --------------------------
@@ -51,6 +56,7 @@ ATC_FULL_MAP = {
     "R01": "鼻腔用药", "R02": "咽喉用药", "R03": "用于阻塞性气道疾病的药物",
     "R05": "咳嗽和感冒用药", "R06": "全身用抗组胺药", "R07": "其他呼吸系统药物"
 }
+
 ATC_CLASS_MAP = {
     "A": "消化系统及代谢药", "B": "血液和造血系统药物", "C": "心血管系统药物",
     "D": "皮肤科用药", "G": "泌尿生殖系统药和性激素", "H": "全身用激素类制剂",
@@ -58,6 +64,7 @@ ATC_CLASS_MAP = {
     "N": "神经系统药物", "P": "抗寄生虫药", "R": "呼吸系统药物",
     "S": "感觉器官药物", "V": "其他药品"
 }
+
 # --------------------------
 # 扩展适应症映射
 # --------------------------
@@ -74,6 +81,7 @@ INDICATION_CN_MAP = {
     "infection": "感染性疾病", "autoimmune": "自身免疫性疾病", "neuropathic pain": "神经病理性疼痛",
     "tuberculosis": "结核病", "malaria": "疟疾", "pneumonia": "肺炎", "sepsis": "脓毒症"
 }
+
 MANUAL_DRUG_INDICATION = {
     "PAROMOMYCIN": "肠道阿米巴病、细菌性痢疾",
     "PAROMOMYCIN SULFATE": "肠道阿米巴病、细菌性痢疾",
@@ -94,6 +102,7 @@ MANUAL_DRUG_INDICATION = {
     "TETRACYCLINE": "立克次体病、支原体肺炎",
     "TETRACYCLINE HYDROCHLORIDE": "立克次体病、支原体肺炎"
 }
+
 # --------------------------
 # 通用缓存工具函数
 # --------------------------
@@ -105,6 +114,7 @@ def load_cache(cache_file):
         except:
             return {}
     return {}
+
 def save_cache(cache_dict, cache_file):
     try:
         with open(cache_file, 'w', encoding='utf-8') as f:
@@ -173,6 +183,7 @@ def load_and_process_data():
         
     df['MainLigandID'] = df['Ligands (对应小分子)'].apply(get_sort_id)
     return df
+
 # --- 🚀 SMILES 多源抓取引擎 ---
 @st.cache_data(ttl=86400, show_spinner=False)
 @lru_cache(maxsize=1000)
@@ -192,6 +203,7 @@ def get_smiles_by_id(ligand_id):
     max_retries = 2
     retry_delay = 1
     smiles_result = None
+    
     # 1. PDBe v2 API
     for attempt in range(max_retries):
         try:
@@ -211,6 +223,7 @@ def get_smiles_by_id(ligand_id):
                         if smiles_result: break
             break
         except: time.sleep(retry_delay)
+        
     # 2. RCSB PDB API
     if not smiles_result:
         for attempt in range(max_retries):
@@ -225,6 +238,7 @@ def get_smiles_by_id(ligand_id):
                         elif "SMILES" in desc: smiles_result = desc["SMILES"]
                         if smiles_result: break
             except: time.sleep(retry_delay)
+            
     # 3. PubChem XRef API
     if not smiles_result:
         try:
@@ -237,6 +251,7 @@ def get_smiles_by_id(ligand_id):
                 if r2.status_code == 200:
                     smiles_result = r2.json()["PropertyTable"]["Properties"][0]["CanonicalSMILES"]
         except: pass
+        
     # 保存到缓存
     if smiles_result:
         cache[ligand_id] = smiles_result
@@ -244,6 +259,7 @@ def get_smiles_by_id(ligand_id):
         return smiles_result
     
     return None
+
 # --------------------------
 # ChEMBL药物搜索
 # --------------------------
@@ -327,6 +343,7 @@ def search_chembl_drugs(smiles, similarity_threshold):
             return [], f"接口连接失败 ({r.status_code})", 0
     except Exception as e:
         return [], f"检索超时或异常: {str(e)}", 0
+
 # --- 🩺 RNA靶点-疾病关联预测引擎 ---
 @st.cache_data(ttl=86400, show_spinner=False)
 @lru_cache(maxsize=500)
@@ -441,13 +458,20 @@ def predict_rna_diseases(pdb_id, description, ligand_id):
     cache[pdb_id] = unique_diseases
     save_cache(cache, DISEASE_CACHE_FILE)
     return unique_diseases
+
 # --- 🎨 主程序界面渲染 ---
 try:
     df = load_and_process_data()
     
     # 侧边栏配置
     st.sidebar.header("⚙️ 查看模式")
-    view_mode = st.sidebar.radio("模式切换", ["🔍 靶点分析 & AIDD药物筛选", "📊 全局画廊对照"])
+    
+    # 【改动点 1：在 radio 中增加新的“特异性病原体靶标挖掘”选项】
+    view_mode = st.sidebar.radio("模式切换", [
+        "🔍 靶点分析 & AIDD药物筛选", 
+        "📊 全局画廊对照",
+        "🦠 特异性病原体靶标挖掘"
+    ])
     
     st.sidebar.divider()
     st.sidebar.header("🔍 数据筛选")
@@ -457,6 +481,7 @@ try:
     # 筛选数据
     f_df = df if selected_cat == "全部 (All)" else df[df['Category'] == selected_cat]
     f_df = f_df.sort_values(by=['MainLigandID', 'PDB ID'])
+    
     # ==========================================
     # 模式1：全局画廊对照
     # ==========================================
@@ -475,9 +500,44 @@ try:
                     <div style="font-size: 0.75em; color: #666; height: 40px; overflow: hidden; line-height: 1.2;">{row['Description (描述)']}</div>
                 </div>
                 """, unsafe_allow_html=True)
-    
+                
     # ==========================================
-    # 模式2：靶点分析 & AIDD药物筛选
+    # 模式2：【新增】特异性病原体靶标挖掘
+    # ==========================================
+    elif view_mode == "🦠 特异性病原体靶标挖掘":
+        st.subheader("🦠 病原微生物专属 RNA 靶标智能挖掘引擎")
+        st.info("自动化扫描全库，深度提取特异性存在于病原体（细菌、真菌、病毒）中、且宿主内罕见的高价值 RNA 靶点（如核糖开关），为破解耐药性或特异性动物疫病提供全新切入点。")
+        
+        # 1. 提取极具抗菌成药潜力的分类
+        target_df = df[df['Category'].isin(['核糖开关 (Riboswitch)', '核糖体 (rRNA)', '特殊结构基元 (Special/Motifs)'])].copy()
+        
+        # 2. 建立致病菌/病毒特征库 (涵盖常见的人畜共患病原体)
+        pathogen_keywords = [
+            'coli', 'aureus', 'staphylococcus', 'mycobacterium', 
+            'bacillus', 'salmonella', 'pseudomonas', 'vibrio', 
+            'influenza', 'hcv', 'viral'
+        ]
+        pattern = '|'.join(pathogen_keywords)
+        
+        # 3. 过滤锁定病原体靶标
+        pathogen_targets = target_df[target_df['Description (描述)'].str.contains(pattern, case=False, na=False)].copy()
+        
+        st.success(f"✅ 挖掘完成！在全库中成功锁定 **{len(pathogen_targets)}** 个具有高成药潜力的病原微生物特异性靶点。")
+        
+        # 4. 数据高亮展示
+        display_df = pathogen_targets[['PDB ID', 'Category', 'MainLigandID', 'Description (描述)', 'Publication (文章出处)']]
+        st.dataframe(display_df, use_container_width=True)
+        
+        st.markdown("""
+        ---
+        💡 **下一步科研流建议**：
+        1. 从上方表格中挑选一个你感兴趣的致病菌靶点（例如某个来自 *E. coli* 的核糖开关的 `PDB ID`）。
+        2. 复制该 ID，切换左侧边栏回到 **🔍 靶点分析 & AIDD药物筛选** 模式。
+        3. 利用平台强大的 AIDD 引擎，搜索是否有具有相似骨架的上市老药，探讨其被重新定向为新型抗菌剂的潜力！
+        """)
+        
+    # ==========================================
+    # 模式3：靶点分析 & AIDD药物筛选 (原有的 Tab 分支保持完全不变)
     # ==========================================
     else:
         tab_single, tab_batch, tab_category = st.tabs([
@@ -493,6 +553,7 @@ try:
             selected_pdb = st.sidebar.selectbox("选择 PDB ID", f_df['PDB ID'].tolist())
             info = df[df['PDB ID'] == selected_pdb].iloc[0]
             target_id = info['MainLigandID']
+            
             # 靶点信息+3D结构
             col1, col2 = st.columns([1, 2])
             with col1:
@@ -519,6 +580,7 @@ try:
                     showmol(view, height=500, width=800)
                 except Exception as e:
                     st.error(f"3D 结构加载失败: {e}")
+                    
             # RNA-疾病关联预测
             st.divider()
             st.subheader("🩺 RNA 靶点-疾病关联预测")
@@ -536,6 +598,7 @@ try:
                 st.info("💡 解读说明: 置信度\"高\"表示有直接实验证据；\"中\"表示基于配体/RNA类型推断；\"中-低\"表示基于通用生物学功能推断。")
             else:
                 st.warning("未找到明确的疾病关联信息。建议结合文献进一步研究。")
+                
             # AIDD药物重定位筛选
             if target_id != "ZZZ":
                 st.divider()
