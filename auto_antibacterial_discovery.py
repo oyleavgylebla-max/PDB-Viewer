@@ -4,12 +4,14 @@ import urllib.parse
 import time
 import json
 import os
+import sys
 from functools import lru_cache
 from datetime import datetime
 
 # =============================================================================
 # 🧬 全RNA靶点药物重定位自动化分析引擎
-# 处理所有298个PDB靶点，生成完整的药物重定位分析报告
+# 支持两种模式：全RNA分析 / 抗菌专项分析
+# 完全兼容GitHub Actions v5工作流
 # =============================================================================
 
 # --------------------------
@@ -17,10 +19,10 @@ from datetime import datetime
 # --------------------------
 SMILES_CACHE_FILE = "smiles_cache.json"
 DRUG_SEARCH_CACHE_FILE = "drug_search_cache.json"
-OUTPUT_DIR = "all_rna_drug_discovery_results"
 
-# 创建输出目录
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# 输出目录（与GitHub Actions工作流完全一致）
+ALL_RNA_OUTPUT_DIR = "all_rna_drug_discovery_results"
+ANTIBACTERIAL_OUTPUT_DIR = "antibacterial_results"
 
 # ATC分类与适应症映射（完整版）
 ATC_FULL_MAP = {
@@ -267,10 +269,10 @@ def search_chembl_drugs(smiles, similarity_threshold):
         return [], f"异常: {str(e)}", 0
 
 # --------------------------
-# 加载所有RNA靶点
+# 靶点加载函数
 # --------------------------
 def load_all_rna_targets():
-    """加载所有298个RNA靶点"""
+    """加载所有RNA靶点"""
     print("🔍 正在加载所有RNA靶点...")
     
     try:
@@ -319,11 +321,66 @@ def load_all_rna_targets():
     
     return valid_df
 
+def load_antibacterial_targets():
+    """加载抗菌RNA靶点（核糖开关和核糖体）"""
+    print("🔍 正在加载抗菌RNA靶点...")
+    
+    try:
+        df = pd.read_excel("PDB_Dataset_Info_Full.xlsx")
+    except FileNotFoundError:
+        print("❌ 错误：未找到数据文件 'PDB_Dataset_Info_Full.xlsx'")
+        exit(1)
+    
+    # RNA分类
+    def categorize(desc):
+        desc_lower = str(desc).lower()
+        if 'riboswitch' in desc_lower: return "核糖开关 (Riboswitch)"
+        elif any(word in desc_lower for word in ['ribosomal', 'ribosome', 'rrna']): return "核糖体 (rRNA)"
+        else: return "其他"
+    
+    df['Category'] = df['Description (描述)'].apply(categorize)
+    
+    # 提取核心配体ID
+    def get_sort_id(ligand_text):
+        if ligand_text == "No ligands" or str(ligand_text) == "nan": return "ZZZ"
+        all_l = str(ligand_text).split(' | ')
+        ions = ['MG', 'NA', 'K', 'CL', 'SO4', 'PO4', 'NCO', 'CD', 'ZN', 'CA', 'HG', 'FE', 'MN', 'CU', 'CO', 'BA', 'SR', 'RB', 'CS', 'LI', 'TL', 'BR', 'I', 'F']
+        for l in all_l:
+            lid = l.strip().split(' ')[0].upper()
+            if lid not in ions: return lid
+        return all_l[0].strip().split(' ')[0].upper()
+        
+    df['MainLigandID'] = df['Ligands (对应小分子)'].apply(get_sort_id)
+    
+    # 筛选抗菌靶点
+    antibacterial_df = df[
+        (df['Category'].isin(["核糖开关 (Riboswitch)", "核糖体 (rRNA)"])) & 
+        (df['MainLigandID'] != "ZZZ")
+    ].copy()
+    
+    # 优先筛选细菌相关靶点
+    def is_bacterial(desc):
+        desc_lower = str(desc).lower()
+        return any(word in desc_lower for word in ['bacterial', 'bacteria', 'escherichia', 'coli', 'staphylococcus', 'aureus', 'streptococcus', 'mycobacterium', 'tuberculosis'])
+    
+    antibacterial_df['IsBacterial'] = antibacterial_df['Description (描述)'].apply(is_bacterial)
+    antibacterial_df = antibacterial_df.sort_values(by=['IsBacterial', 'Category'], ascending=[False, True])
+    
+    print(f"✅ 筛选完成：共找到 {len(antibacterial_df)} 个抗菌RNA靶点")
+    print(f"   - 核糖开关: {len(antibacterial_df[antibacterial_df['Category'] == '核糖开关 (Riboswitch)'])} 个")
+    print(f"   - 核糖体: {len(antibacterial_df[antibacterial_df['Category'] == '核糖体 (rRNA)'])} 个")
+    print(f"   - 明确细菌相关: {len(antibacterial_df[antibacterial_df['IsBacterial']])} 个")
+    
+    return antibacterial_df
+
 # --------------------------
-# 批量药物分析与优先级排序
+# 批量药物分析与报告生成
 # --------------------------
-def batch_analyze_all_targets(targets_df, similarity_threshold=70):
-    """批量分析所有RNA靶点的潜在药物"""
+def batch_analyze_targets(targets_df, similarity_threshold, output_dir, report_title, report_subtitle):
+    """批量分析靶点并生成报告"""
+    # 创建输出目录
+    os.makedirs(output_dir, exist_ok=True)
+    
     print(f"\n🚀 开始批量药物重定位分析（相似度阈值: {similarity_threshold}%）...")
     
     all_results = []
@@ -335,7 +392,7 @@ def batch_analyze_all_targets(targets_df, similarity_threshold=70):
         category = row['Category']
         description = row['Description (描述)']
         
-        # 每10个靶点打印一次进度，避免刷屏
+        # 每10个靶点打印一次进度
         if (idx + 1) % 10 == 0 or idx == 0:
             print(f"   正在处理 [{idx+1}/{total_targets}] {pdb_id} (配体: {ligand_id})")
         
@@ -353,6 +410,10 @@ def batch_analyze_all_targets(targets_df, similarity_threshold=70):
             all_results.append(drug)
     
     print(f"\n✅ 批量分析完成！共匹配到 {len(all_results)} 条药物记录")
+    
+    if len(all_results) == 0:
+        print("❌ 未匹配到任何药物")
+        return
     
     # 优先级排序
     print("\n📊 正在进行药物优先级排序...")
@@ -383,13 +444,7 @@ def batch_analyze_all_targets(targets_df, similarity_threshold=70):
     ]
     result_df = result_df[column_order]
     
-    return result_df
-
-# --------------------------
-# 生成专业HTML报告
-# --------------------------
-def generate_html_report(result_df, targets_df):
-    """生成完整的全RNA药物重定位报告"""
+    # 生成HTML报告
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # 统计信息
@@ -412,7 +467,7 @@ def generate_html_report(result_df, targets_df):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>全RNA靶点药物重定位分析报告</title>
+        <title>{report_title}</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <style>
             body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; }}
@@ -427,8 +482,8 @@ def generate_html_report(result_df, targets_df):
     <body>
         <div class="header">
             <div class="container">
-                <h1 class="text-center">🧬 全RNA靶点药物重定位分析报告</h1>
-                <p class="text-center lead">基于所有298个PDB RNA结构的系统性药物重定位分析</p>
+                <h1 class="text-center">{report_title}</h1>
+                <p class="text-center lead">{report_subtitle}</p>
                 <p class="text-center">报告生成时间: {timestamp}</p>
             </div>
         </div>
@@ -504,81 +559,81 @@ def generate_html_report(result_df, targets_df):
                         </ul>
                     </div>
                 </div>
-                <div class="row mt-4">
-                    <div class="col-md-6">
-                        <h5>🧠 神经系统疾病方向</h5>
-                        <ul>
-                            <li>关注与神经退行性疾病相关的RNA结构</li>
-                            <li>筛选能够调控RNA功能的小分子</li>
-                        </ul>
-                    </div>
-                    <div class="col-md-6">
-                        <h5>🦠 抗病毒药物方向</h5>
-                        <ul>
-                            <li>研究病毒RNA结构的保守区域</li>
-                            <li>开发广谱抗病毒药物</li>
-                        </ul>
-                    </div>
-                </div>
             </div>
         </div>
 
         <div class="footer">
             <p>本报告由RNA结构精细化分类与AIDD药物重定位平台自动生成</p>
-            <p>© 2025 全RNA药物重定位自动化系统</p>
+            <p>© 2025 RNA药物重定位自动化系统</p>
         </div>
     </body>
     </html>
     """
     
-    report_path = os.path.join(OUTPUT_DIR, "all_rna_drug_discovery_report.html")
+    report_path = os.path.join(output_dir, "drug_discovery_report.html")
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
     
-    csv_path = os.path.join(OUTPUT_DIR, "all_rna_candidate_drugs.csv")
+    csv_path = os.path.join(output_dir, "candidate_drugs.csv")
     result_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
     
     print(f"\n📄 报告生成完成！")
     print(f"   - 完整报告: {report_path}")
     print(f"   - 候选药物列表: {csv_path}")
     
-    return report_path, csv_path
-
-# --------------------------
-# 主函数：一键运行全流程
-# --------------------------
-def main():
-    print("="*70)
-    print("🧬 全RNA靶点药物重定位自动化分析引擎")
-    print("="*70)
-    
-    # 步骤1：加载所有RNA靶点
-    targets_df = load_all_rna_targets()
-    
-    if len(targets_df) == 0:
-        print("❌ 未找到任何有配体的RNA靶点")
-        return
-    
-    # 步骤2：批量药物分析
-    result_df = batch_analyze_all_targets(targets_df, similarity_threshold=70)
-    
-    if len(result_df) == 0:
-        print("❌ 未匹配到任何药物")
-        return
-    
-    # 步骤3：生成报告
-    report_path, csv_path = generate_html_report(result_df, targets_df)
-    
-    print("\n" + "="*70)
-    print("✅ 全RNA药物重定位分析完成！")
-    print("="*70)
+    # 打印TOP 5
     print(f"\n📌 高优先级候选药物TOP 5:")
     for i in range(min(5, len(result_df))):
         row = result_df.iloc[i]
         print(f"   {i+1}. {row['药物名称']} (相似度: {row['相似度(%)']}%, RNA类别: {row['RNA类别']}, 靶点: {row['PDB ID']})")
     
-    print(f"\n📂 所有结果已保存到 '{OUTPUT_DIR}' 目录")
-    print(f"🌐 请打开 {report_path} 查看完整报告")
+    return result_df
+
+# --------------------------
+# 主函数
+# --------------------------
+def main():
+    # 解析命令行参数
+    mode = "all"  # 默认全RNA模式
+    similarity_threshold = 70
+    
+    if len(sys.argv) > 1:
+        mode = sys.argv[1].lower()
+    if len(sys.argv) > 2:
+        similarity_threshold = int(sys.argv[2])
+    
+    print("="*70)
+    if mode == "antibacterial":
+        print("🦠 全自动新型抗菌药物靶点发现与设计引擎")
+        targets_df = load_antibacterial_targets()
+        output_dir = ANTIBACTERIAL_OUTPUT_DIR
+        report_title = "新型抗菌药物靶点发现与设计报告"
+        report_subtitle = "基于核糖开关和核糖体RNA结构的AIDD药物重定位分析"
+    else:
+        print("🧬 全RNA靶点药物重定位自动化分析引擎")
+        targets_df = load_all_rna_targets()
+        output_dir = ALL_RNA_OUTPUT_DIR
+        report_title = "全RNA靶点药物重定位分析报告"
+        report_subtitle = "基于所有PDB RNA结构的系统性药物重定位分析"
+    print("="*70)
+    
+    if len(targets_df) == 0:
+        print("❌ 未找到任何有效靶点")
+        return
+    
+    # 批量分析
+    result_df = batch_analyze_targets(
+        targets_df, 
+        similarity_threshold, 
+        output_dir, 
+        report_title, 
+        report_subtitle
+    )
+    
+    print("\n" + "="*70)
+    print("✅ 分析流程完成！")
+    print("="*70)
+    print(f"\n📂 所有结果已保存到 '{output_dir}' 目录")
 
 if __name__ == "__main__":
     main()
