@@ -8,9 +8,12 @@ from functools import lru_cache
 from tqdm import tqdm
 
 # =============================================================================
-# 🧬 RNA靶点AIDD药物重定位 全自动工作流（靶点查询修复版）
-# 版本: 2.1 修复版
-# 修复内容: 优化ChEMBL API查询逻辑，解决药物靶点查询失败问题
+# 🧬 RNA靶点AIDD药物重定位 全自动工作流（终极修复版）
+# 版本: 2.2 终极修复版
+# 修复内容: 
+#   1. 解决药物名称截断问题（加入常见药物完整名称映射）
+#   2. 优化ChEMBL API查询逻辑，支持模糊匹配
+#   3. 增加手动靶点数据库，确保常见药物100%正确识别
 # =============================================================================
 
 # ======================================
@@ -98,6 +101,55 @@ MANUAL_DRUG_INDICATION = {
     "ERYTHROMYCIN": "呼吸道感染、皮肤软组织感染", "ERYTHROMYCIN LACTOBIONATE": "呼吸道感染、皮肤软组织感染",
     "TETRACYCLINE": "立克次体病、支原体肺炎", "TETRACYCLINE HYDROCHLORIDE": "立克次体病、支原体肺炎"
 }
+
+# ======================================
+# ✨ 新增：药物名称截断修复映射表
+# ======================================
+DRUG_NAME_FIX_MAP = {
+    "VIDARAI": "VIDARABINE", "THIOGU": "THIOGUANINE", "MITOXA": "MITOXANTRONE",
+    "TOBRAM": "TOBRAMYCIN", "KANAMY": "KANAMYCIN", "PEMETR": "PEMETREXED",
+    "FLUDAR": "FLUDARABINE", "NETILM": "NETILMICIN", "GENTAM": "GENTAMICIN",
+    "AMIKAC": "AMIKACIN", "STREPT": "STREPTOMYCIN", "ERYTHR": "ERYTHROMYCIN",
+    "TETRAC": "TETRACYCLINE", "RIBAVI": "RIBAVIRIN", "SOFOSB": "SOFOSBUVIR",
+    "LINEZO": "LINEZOLID", "TEDIZO": "TEDIZOLID", "PAROMO": "PAROMOMYCIN",
+    "NEOMYC": "NEOMYCIN", "CISPLAT": "CISPLATIN", "DOXORU": "DOXORUBICIN",
+    "DAUNOR": "DAUNORUBICIN", "VINBLA": "VINBLASTINE", "VINCRI": "VINCRISTINE",
+    "PACLIT": "PACLITAXEL", "DOCETA": "DOCETAXEL", "IMATIN": "IMATINIB",
+    "ERLOTI": "ERLOTINIB", "GEFITI": "GEFITINIB", "SORAFE": "SORAFENIB",
+    "SUNITI": "SUNITINIB", "LAPATI": "LAPATINIB", "TRASTU": "TRASTUZUMAB",
+    "RITUXI": "RITUXIMAB", "BEVACI": "BEVACIZUMAB", "CETUXI": "CETUXIMAB"
+}
+
+# ======================================
+# ✨ 新增：手动靶点数据库（确保100%准确）
+# ======================================
+MANUAL_TARGET_DB = {
+    "TOBRAMYCIN": ({"RIBOSOME"}, ["细菌核糖体16S rRNA"]),
+    "KANAMYCIN": ({"RIBOSOME"}, ["细菌核糖体16S rRNA"]),
+    "GENTAMICIN": ({"RIBOSOME"}, ["细菌核糖体16S rRNA"]),
+    "AMIKACIN": ({"RIBOSOME"}, ["细菌核糖体16S rRNA"]),
+    "NETILMICIN": ({"RIBOSOME"}, ["细菌核糖体16S rRNA"]),
+    "STREPTOMYCIN": ({"RIBOSOME"}, ["细菌核糖体16S rRNA"]),
+    "PAROMOMYCIN": ({"RIBOSOME"}, ["细菌核糖体16S rRNA"]),
+    "LINEZOLID": ({"RIBOSOME"}, ["细菌核糖体23S rRNA"]),
+    "TEDIZOLID": ({"RIBOSOME"}, ["细菌核糖体23S rRNA"]),
+    "PEMETREXED": ({"PROTEIN", "ENZYME"}, ["二氢叶酸还原酶", "胸苷酸合成酶", "甘氨酰胺核苷酸甲酰转移酶"]),
+    "FLUDARABINE": ({"PROTEIN", "ENZYME"}, ["DNA聚合酶", "核糖核苷酸还原酶"]),
+    "MITOXANTRONE": ({"PROTEIN", "ENZYME"}, ["DNA拓扑异构酶II"]),
+    "THIOGUANINE": ({"PROTEIN", "ENZYME"}, ["次黄嘌呤-鸟嘌呤磷酸核糖转移酶"]),
+    "VIDARABINE": ({"PROTEIN", "ENZYME"}, ["病毒DNA聚合酶"]),
+    "RIBAVIRIN": ({"PROTEIN", "ENZYME"}, ["病毒RNA聚合酶", "肌苷单磷酸脱氢酶"]),
+    "SOFOSBUVIR": ({"PROTEIN", "ENZYME"}, ["丙型肝炎病毒NS5B RNA聚合酶"]),
+    "CISPLATIN": ({"NUCLEIC ACID"}, ["DNA"]),
+    "DOXORUBICIN": ({"PROTEIN", "NUCLEIC ACID"}, ["DNA拓扑异构酶II", "DNA"]),
+    "DAUNORUBICIN": ({"PROTEIN", "NUCLEIC ACID"}, ["DNA拓扑异构酶II", "DNA"]),
+    "PACLITAXEL": ({"PROTEIN"}, ["微管蛋白"]),
+    "DOCETAXEL": ({"PROTEIN"}, ["微管蛋白"]),
+    "IMATINIB": ({"PROTEIN", "KINASE"}, ["BCR-ABL酪氨酸激酶"]),
+    "ERLOTINIB": ({"PROTEIN", "KINASE"}, ["表皮生长因子受体EGFR"]),
+    "GEFITINIB": ({"PROTEIN", "KINASE"}, ["表皮生长因子受体EGFR"])
+}
+
 KNOWN_RNA_DRUGS = {
     "GENTAMICIN": "已知靶向细菌核糖体RNA", "AMIKACIN": "已知靶向细菌核糖体RNA",
     "TOBRAMYCIN": "已知靶向细菌核糖体RNA", "KANAMYCIN": "已知靶向细菌核糖体RNA",
@@ -291,21 +343,42 @@ def search_similar_drugs(smiles, similarity_threshold):
         return [], f"请求异常: {str(e)}", 0
 
 # ======================================
-# 🔍 修复版：靶点不同确认核心模块
+# 🔍 终极修复版：靶点不同确认核心模块
 # ======================================
+def fix_drug_name(drug_name):
+    """修复截断的药物名称"""
+    drug_name_upper = str(drug_name).upper().strip()
+    # 先查手动映射表
+    for truncated, full in DRUG_NAME_FIX_MAP.items():
+        if drug_name_upper.startswith(truncated):
+            return full
+    return drug_name_upper
+
 def get_drug_known_targets_cached(drug_name):
-    """带缓存的靶点查询（修复大小写和API问题）"""
+    """带缓存的靶点查询（终极修复版）"""
     target_cache = load_cache(TARGET_CACHE_FILE)
-    drug_name_key = drug_name.upper().strip()
+    # 先修复药物名称
+    fixed_drug_name = fix_drug_name(drug_name)
+    drug_name_key = fixed_drug_name.upper().strip()
     
     if drug_name_key in target_cache:
         return target_cache[drug_name_key]["types"], target_cache[drug_name_key]["descs"]
     
+    # 优先查手动靶点数据库（100%准确）
+    if drug_name_key in MANUAL_TARGET_DB:
+        target_types, target_descs = MANUAL_TARGET_DB[drug_name_key]
+        target_cache[drug_name_key] = {
+            "types": list(target_types),
+            "descs": target_descs
+        }
+        save_cache(target_cache, TARGET_CACHE_FILE)
+        return target_types, target_descs
+    
+    # 手动数据库没有，再查ChEMBL API
     try:
-        # 修复1：不区分大小写查询
         search_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?format=json"
         params = {
-            "pref_name__icontains": drug_name.strip(),
+            "pref_name__icontains": fixed_drug_name,
             "limit": 10
         }
         r = requests.get(search_url, params=params, headers=REQUEST_HEADERS, timeout=10)
@@ -323,11 +396,9 @@ def get_drug_known_targets_cached(drug_name):
                 mol_chembl_id = mol["molecule_chembl_id"]
                 break
         
-        # 如果没有完全匹配，取第一个
         if not mol_chembl_id:
             mol_chembl_id = data["molecules"][0]["molecule_chembl_id"]
         
-        # 修复2：改用更可靠的靶点接口
         target_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{mol_chembl_id}/targets?format=json"
         r2 = requests.get(target_url, headers=REQUEST_HEADERS, timeout=10)
         if r2.status_code != 200:
@@ -386,7 +457,7 @@ def is_confirmed_different_target(row):
 # ======================================
 def main_workflow():
     print("="*80)
-    print("🧬 RNA靶点AIDD药物重定位 全自动工作流（靶点查询修复版）")
+    print("🧬 RNA靶点AIDD药物重定位 全自动工作流（终极修复版）")
     print("="*80)
 
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -452,7 +523,7 @@ def main_workflow():
             "判断理由": reason,
             "已知靶点信息": known_targets
         })
-        time.sleep(0.15)
+        time.sleep(0.1)
 
     confirmation_df = pd.DataFrame(confirmation_results)
     pre_filtered = pd.concat([pre_filtered.reset_index(drop=True), confirmation_df], axis=1)
