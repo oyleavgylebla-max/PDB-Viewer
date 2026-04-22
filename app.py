@@ -11,13 +11,13 @@ from functools import lru_cache
 
 # =============================================================================
 # 🧬 RNA 结构精细化分类与 AIDD 药物重定位平台
-# 版本: 3.4 (作用域Bug修复版)
+# 版本: 3.5 (病原体精细化提取升级版)
 # 更新日志:
 #   - 修复 categorize 函数作用域问题
 #   - 新增tRNA(转运RNA)独立分类
 #   - 修复含riboswitch scaffold的miRNA被错误分类问题
 #   - 所有297个PDB ID分类100%准确
-#   - 【新增】特异性病原体靶标挖掘模块
+#   - 【升级】特异性病原体靶标挖掘：新增智能提取并显示具体的中文病原菌信息
 # =============================================================================
 
 # --- 🔧 全局配置与缓存系统 ---
@@ -122,7 +122,7 @@ def save_cache(cache_dict, cache_file):
     except Exception as e:
         st.warning(f"缓存保存失败: {e}")
 
-# ✨ 全局RNA精细化分类函数（必须放在最前面）
+# ✨ 全局RNA精细化分类函数
 def categorize(desc):
     desc_lower = str(desc).lower()
     
@@ -466,7 +466,6 @@ try:
     # 侧边栏配置
     st.sidebar.header("⚙️ 查看模式")
     
-    # 【改动点 1：在 radio 中增加新的“特异性病原体靶标挖掘”选项】
     view_mode = st.sidebar.radio("模式切换", [
         "🔍 靶点分析 & AIDD药物筛选", 
         "📊 全局画廊对照",
@@ -502,42 +501,87 @@ try:
                 """, unsafe_allow_html=True)
                 
     # ==========================================
-    # 模式2：【新增】特异性病原体靶标挖掘
+    # 模式2：【升级】特异性病原体靶标挖掘
     # ==========================================
     elif view_mode == "🦠 特异性病原体靶标挖掘":
         st.subheader("🦠 病原微生物专属 RNA 靶标智能挖掘引擎")
-        st.info("自动化扫描全库，深度提取特异性存在于病原体（细菌、真菌、病毒）中、且宿主内罕见的高价值 RNA 靶点（如核糖开关），为破解耐药性或特异性动物疫病提供全新切入点。")
+        st.info("自动化扫描全库，深度提取特异性存在于病原体中、且宿主内罕见的高价值 RNA 靶点，为破解耐药性或特异性疫病提供全新切入点。")
         
         # 1. 提取极具抗菌成药潜力的分类
         target_df = df[df['Category'].isin(['核糖开关 (Riboswitch)', '核糖体 (rRNA)', '特殊结构基元 (Special/Motifs)'])].copy()
         
-        # 2. 建立致病菌/病毒特征库 (涵盖常见的人畜共患病原体)
-        pathogen_keywords = [
-            'coli', 'aureus', 'staphylococcus', 'mycobacterium', 
-            'bacillus', 'salmonella', 'pseudomonas', 'vibrio', 
-            'influenza', 'hcv', 'viral'
-        ]
+        # 2. 建立【英文关键词】->【中文病原菌】的知识映射字典
+        pathogen_dict = {
+            'coli': '大肠杆菌 (E. coli)',
+            'aureus': '金黄色葡萄球菌 (S. aureus)',
+            'staphylococcus': '葡萄球菌 (Staphylococcus spp.)',
+            'mycobacterium': '结核分枝杆菌 (Mycobacterium spp.)',
+            'tuberculosis': '结核分枝杆菌 (M. tuberculosis)',
+            'bacillus': '芽孢杆菌 (Bacillus spp.)',
+            'subtilis': '枯草芽孢杆菌 (B. subtilis)',
+            'salmonella': '沙门氏菌 (Salmonella)',
+            'pseudomonas': '假单胞菌 (Pseudomonas spp.)',
+            'aeruginosa': '铜绿假单胞菌 (P. aeruginosa)',
+            'vibrio': '弧菌 (Vibrio spp.)',
+            'cholerae': '霍乱弧菌 (V. cholerae)',
+            'influenza': '流感病毒 (Influenza virus)',
+            'hcv': '丙型肝炎病毒 (HCV)',
+            'hepatitis c': '丙型肝炎病毒 (HCV)',
+            'hiv': '艾滋病病毒 (HIV)',
+            'sars': '冠状病毒 (SARS-CoV)',
+            'streptococcus': '链球菌 (Streptococcus spp.)',
+            'pneumoniae': '肺炎链球菌/克雷伯菌',
+            'listeria': '李斯特菌 (L. monocytogenes)',
+            'campylobacter': '弯曲杆菌 (Campylobacter spp.)'
+        }
+        
+        pathogen_keywords = list(pathogen_dict.keys())
         pattern = '|'.join(pathogen_keywords)
         
         # 3. 过滤锁定病原体靶标
         pathogen_targets = target_df[target_df['Description (描述)'].str.contains(pattern, case=False, na=False)].copy()
         
+        # 4. 智能提取并清洗具体的病原菌名称
+        def extract_specific_pathogens(desc):
+            desc_lower = str(desc).lower()
+            matched = set()
+            for key, name in pathogen_dict.items():
+                if key in desc_lower:
+                    matched.add(name)
+            
+            # 智能清洗子集（如果同时匹配到具体的"金黄色葡萄球菌"和宽泛的"葡萄球菌"，则保留具体的）
+            if '金黄色葡萄球菌 (S. aureus)' in matched and '葡萄球菌 (Staphylococcus spp.)' in matched:
+                matched.remove('葡萄球菌 (Staphylococcus spp.)')
+            if '结核分枝杆菌 (M. tuberculosis)' in matched and '结核分枝杆菌 (Mycobacterium spp.)' in matched:
+                matched.remove('结核分枝杆菌 (Mycobacterium spp.)')
+            if '枯草芽孢杆菌 (B. subtilis)' in matched and '芽孢杆菌 (Bacillus spp.)' in matched:
+                matched.remove('芽孢杆菌 (Bacillus spp.)')
+            if '霍乱弧菌 (V. cholerae)' in matched and '弧菌 (Vibrio spp.)' in matched:
+                matched.remove('弧菌 (Vibrio spp.)')
+            if '铜绿假单胞菌 (P. aeruginosa)' in matched and '假单胞菌 (Pseudomonas spp.)' in matched:
+                matched.remove('假单胞菌 (Pseudomonas spp.)')
+                
+            return "、".join(list(matched)) if matched else "未知病原体"
+
+        # 应用提取函数，生成新的一列
+        pathogen_targets['关联病原微生物'] = pathogen_targets['Description (描述)'].apply(extract_specific_pathogens)
+        
         st.success(f"✅ 挖掘完成！在全库中成功锁定 **{len(pathogen_targets)}** 个具有高成药潜力的病原微生物特异性靶点。")
         
-        # 4. 数据高亮展示
-        display_df = pathogen_targets[['PDB ID', 'Category', 'MainLigandID', 'Description (描述)', 'Publication (文章出处)']]
+        # 5. 数据高亮展示 (调整了列顺序，将关联病原微生物放在显眼位置)
+        display_df = pathogen_targets[['PDB ID', '关联病原微生物', 'Category', 'MainLigandID', 'Description (描述)']]
         st.dataframe(display_df, use_container_width=True)
         
         st.markdown("""
         ---
         💡 **下一步科研流建议**：
-        1. 从上方表格中挑选一个你感兴趣的致病菌靶点（例如某个来自 *E. coli* 的核糖开关的 `PDB ID`）。
+        1. 从上方表格中挑选一个你感兴趣的致病菌靶点（例如某个来自 *大肠杆菌* 或 *结核分枝杆菌* 的 `PDB ID`）。
         2. 复制该 ID，切换左侧边栏回到 **🔍 靶点分析 & AIDD药物筛选** 模式。
         3. 利用平台强大的 AIDD 引擎，搜索是否有具有相似骨架的上市老药，探讨其被重新定向为新型抗菌剂的潜力！
         """)
         
     # ==========================================
-    # 模式3：靶点分析 & AIDD药物筛选 (原有的 Tab 分支保持完全不变)
+    # 模式3：靶点分析 & AIDD药物筛选
     # ==========================================
     else:
         tab_single, tab_batch, tab_category = st.tabs([
