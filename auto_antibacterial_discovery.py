@@ -8,30 +8,66 @@ from functools import lru_cache
 from datetime import datetime
 
 # =============================================================================
-# 🦠 全自动新型抗菌药物靶点发现与设计引擎
-# 基于RNA结构与AIDD药物重定位技术
-# 自动完成：靶点筛选 → 批量药物分析 → 优先级排序 → 生成专业报告
+# 🧬 全RNA靶点药物重定位自动化分析引擎
+# 处理所有298个PDB靶点，生成完整的药物重定位分析报告
 # =============================================================================
 
 # --------------------------
-# 配置与缓存系统（与原平台完全一致）
+# 配置与缓存系统
 # --------------------------
 SMILES_CACHE_FILE = "smiles_cache.json"
 DRUG_SEARCH_CACHE_FILE = "drug_search_cache.json"
-OUTPUT_DIR = "antibacterial_results"
+OUTPUT_DIR = "all_rna_drug_discovery_results"
 
 # 创建输出目录
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ATC分类与适应症映射（与原平台完全一致）
+# ATC分类与适应症映射（完整版）
 ATC_FULL_MAP = {
+    "A01": "口腔病用药", "A02": "治疗胃酸相关疾病的药物", "A03": "治疗功能性胃肠道疾病的药物",
+    "A04": "止吐药和止恶心药", "A05": "胆和肝治疗药", "A06": "轻泻药", "A07": "肠道抗感染药和肠道消炎药",
+    "A08": "减肥药", "A09": "消化药，包括酶", "A10": "糖尿病用药", "A11": "维生素类", "A12": "矿物质补充剂",
+    "A13": "滋补药", "A14": "全身用蛋白同化类固醇", "A15": "食欲刺激药", "A16": "其他消化道和代谢药物",
+    "B01": "抗血栓药", "B02": "止血药", "B03": "抗贫血药", "B05": "血液代用品和灌注液",
+    "B06": "其他血液系统用药",
+    "C01": "心脏治疗药", "C02": "抗高血压药", "C03": "利尿药", "C04": "外周血管扩张药",
+    "C05": "血管保护剂", "C07": "β受体阻滞剂", "C08": "钙通道阻滞剂", "C09": "作用于肾素-血管紧张素系统的药物",
+    "C10": "血脂调节剂",
+    "D01": "皮肤用抗真菌药", "D02": "润肤剂和保护剂", "D03": "皮肤用皮质类固醇",
+    "D04": "止痒药，包括抗组胺药、麻醉药", "D05": "银屑病用药", "D06": "皮肤用抗生素和化疗药",
+    "D07": "皮肤用皮质类固醇和抗生素的复方制剂", "D08": "皮肤用消毒剂和防腐剂",
+    "D09": "伤口敷料和保护剂", "D10": "痤疮用药", "D11": "其他皮肤科用药",
     "J01": "全身用抗菌药", "J02": "全身用抗真菌药", "J04": "抗分枝杆菌药", "J05": "全身用抗病毒药",
-    "A07": "肠道抗感染药和肠道消炎药"
+    "J06": "免疫血清和免疫球蛋白", "J07": "疫苗",
+    "L01": "抗肿瘤药", "L02": "内分泌治疗药", "L03": "免疫刺激剂", "L04": "免疫抑制剂",
+    "M01": "抗炎和抗风湿药", "M02": "局部用肌肉骨骼系统药物", "M03": "肌肉松弛药",
+    "M04": "抗痛风药", "M05": "治疗骨病的药物",
+    "N01": "麻醉药", "N02": "镇痛药", "N03": "抗癫痫药", "N04": "抗帕金森病药",
+    "N05": "精神安定药", "N06": "精神兴奋药", "N07": "其他神经系统药物",
+    "R01": "鼻腔用药", "R02": "咽喉用药", "R03": "用于阻塞性气道疾病的药物",
+    "R05": "咳嗽和感冒用药", "R06": "全身用抗组胺药", "R07": "其他呼吸系统药物"
+}
+
+ATC_CLASS_MAP = {
+    "A": "消化系统及代谢药", "B": "血液和造血系统药物", "C": "心血管系统药物",
+    "D": "皮肤科用药", "G": "泌尿生殖系统药和性激素", "H": "全身用激素类制剂",
+    "J": "全身用抗感染药", "L": "抗肿瘤药和免疫调节剂", "M": "肌肉-骨骼系统药物",
+    "N": "神经系统药物", "P": "抗寄生虫药", "R": "呼吸系统药物",
+    "S": "感觉器官药物", "V": "其他药品"
 }
 
 INDICATION_CN_MAP = {
-    "bacterial infection": "细菌感染", "infection": "感染性疾病", "tuberculosis": "结核病",
-    "pneumonia": "肺炎", "sepsis": "脓毒症", "urinary tract infection": "尿路感染"
+    "cancer": "癌症", "tumor": "肿瘤", "carcinoma": "恶性肿瘤", "leukemia": "白血病",
+    "hiv": "艾滋病", "influenza": "流感", "hepatitis": "肝炎", "bacterial infection": "细菌感染",
+    "diabetes": "糖尿病", "obesity": "肥胖症", "hypertension": "高血压", "cardiovascular": "心血管疾病",
+    "alzheimer": "阿尔茨海默病", "parkinson": "帕金森病", "arthritis": "关节炎", "asthma": "哮喘",
+    "depression": "抑郁症", "pain": "疼痛", "inflammation": "炎症", "fungal infection": "真菌感染",
+    "virus infection": "病毒感染", "thromboembolism": "血栓栓塞", "stroke": "中风",
+    "psychosis": "精神病", "schizophrenia": "精神分裂症", "epilepsy": "癫痫",
+    "gastroesophageal reflux": "胃食管反流", "ulcer": "消化道溃疡", "anemia": "贫血",
+    "glaucoma": "青光眼", "migraine": "偏头痛", "osteoporosis": "骨质疏松症",
+    "infection": "感染性疾病", "autoimmune": "自身免疫性疾病", "neuropathic pain": "神经病理性疼痛",
+    "tuberculosis": "结核病", "malaria": "疟疾", "pneumonia": "肺炎", "sepsis": "脓毒症"
 }
 
 MANUAL_DRUG_INDICATION = {
@@ -73,7 +109,7 @@ def save_cache(cache_dict, cache_file):
         print(f"⚠️ 缓存保存失败: {e}")
 
 # --------------------------
-# 核心函数（与原平台完全一致，保证结果一致性）
+# 核心API函数
 # --------------------------
 @lru_cache(maxsize=1000)
 def get_smiles_by_id(ligand_id):
@@ -196,15 +232,19 @@ def search_chembl_drugs(smiles, similarity_threshold):
                         indication_list.append(MANUAL_DRUG_INDICATION[base_name])
                 
                 if not indication_list:
-                    indication_list.append("细菌感染")
+                    indication_list.append("暂无明确适应症")
                 
                 # 药物分类
-                drug_class = "全身用抗菌药"
+                drug_class = "未分类"
                 atc_list = m.get('atc_classifications', [])
                 if atc_list:
                     atc_code = atc_list[0][:3]
                     if atc_code in ATC_FULL_MAP:
                         drug_class = ATC_FULL_MAP[atc_code]
+                    else:
+                        atc_first = atc_list[0][0].upper()
+                        if atc_first in ATC_CLASS_MAP:
+                            drug_class = ATC_CLASS_MAP[atc_first]
                 
                 drugs.append({
                     "药物名称": m.get('pref_name'),
@@ -227,11 +267,11 @@ def search_chembl_drugs(smiles, similarity_threshold):
         return [], f"异常: {str(e)}", 0
 
 # --------------------------
-# 自动化抗菌靶点筛选引擎
+# 加载所有RNA靶点
 # --------------------------
-def load_and_filter_antibacterial_targets():
-    """自动加载并筛选抗菌RNA靶点（核糖开关和核糖体）"""
-    print("🔍 正在加载并筛选抗菌RNA靶点...")
+def load_all_rna_targets():
+    """加载所有298个RNA靶点"""
+    print("🔍 正在加载所有RNA靶点...")
     
     try:
         df = pd.read_excel("PDB_Dataset_Info_Full.xlsx")
@@ -243,8 +283,12 @@ def load_and_filter_antibacterial_targets():
     def categorize(desc):
         desc_lower = str(desc).lower()
         if 'riboswitch' in desc_lower: return "核糖开关 (Riboswitch)"
+        elif 'aptamer' in desc_lower: return "适配体 (Aptamer)"
+        elif any(word in desc_lower for word in ['quadruplex', 'g-4', 'g4']): return "G-四联体 (G-quadruplex)"
         elif any(word in desc_lower for word in ['ribosomal', 'ribosome', 'rrna']): return "核糖体 (rRNA)"
-        else: return "其他"
+        elif 'ribozyme' in desc_lower: return "核酶 (Ribozyme)"
+        elif any(word in desc_lower for word in ['ires', 'hairpin', 'stem-loop', 'pseudoknot']): return "特殊结构基元 (Special/Motifs)"
+        else: return "其他 RNA (Others)"
     
     df['Category'] = df['Description (描述)'].apply(categorize)
     
@@ -260,33 +304,27 @@ def load_and_filter_antibacterial_targets():
         
     df['MainLigandID'] = df['Ligands (对应小分子)'].apply(get_sort_id)
     
-    # 筛选抗菌靶点
-    antibacterial_df = df[
-        (df['Category'].isin(["核糖开关 (Riboswitch)", "核糖体 (rRNA)"])) & 
-        (df['MainLigandID'] != "ZZZ")
-    ].copy()
+    # 筛选有配体的靶点
+    valid_df = df[df['MainLigandID'] != "ZZZ"].copy()
     
-    # 优先筛选细菌相关靶点
-    def is_bacterial(desc):
-        desc_lower = str(desc).lower()
-        return any(word in desc_lower for word in ['bacterial', 'bacteria', 'escherichia', 'coli', 'staphylococcus', 'aureus', 'streptococcus', 'mycobacterium', 'tuberculosis'])
+    print(f"✅ 加载完成：共 {len(df)} 个PDB结构")
+    print(f"   - 有核心配体的靶点: {len(valid_df)} 个")
+    print(f"   - 无配体的靶点: {len(df)-len(valid_df)} 个（已跳过）")
     
-    antibacterial_df['IsBacterial'] = antibacterial_df['Description (描述)'].apply(is_bacterial)
-    antibacterial_df = antibacterial_df.sort_values(by=['IsBacterial', 'Category'], ascending=[False, True])
+    # 按类别统计
+    category_stats = valid_df['Category'].value_counts()
+    print(f"\n📊 靶点类别分布:")
+    for cat, count in category_stats.items():
+        print(f"   - {cat}: {count} 个")
     
-    print(f"✅ 筛选完成：共找到 {len(antibacterial_df)} 个抗菌RNA靶点")
-    print(f"   - 核糖开关: {len(antibacterial_df[antibacterial_df['Category'] == '核糖开关 (Riboswitch)'])} 个")
-    print(f"   - 核糖体: {len(antibacterial_df[antibacterial_df['Category'] == '核糖体 (rRNA)'])} 个")
-    print(f"   - 明确细菌相关: {len(antibacterial_df[antibacterial_df['IsBacterial']])} 个")
-    
-    return antibacterial_df
+    return valid_df
 
 # --------------------------
 # 批量药物分析与优先级排序
 # --------------------------
-def batch_analyze_antibacterial_targets(targets_df, similarity_threshold=70):
-    """批量分析所有抗菌靶点的潜在药物"""
-    print("\n🚀 开始批量药物重定位分析...")
+def batch_analyze_all_targets(targets_df, similarity_threshold=70):
+    """批量分析所有RNA靶点的潜在药物"""
+    print(f"\n🚀 开始批量药物重定位分析（相似度阈值: {similarity_threshold}%）...")
     
     all_results = []
     total_targets = len(targets_df)
@@ -297,11 +335,12 @@ def batch_analyze_antibacterial_targets(targets_df, similarity_threshold=70):
         category = row['Category']
         description = row['Description (描述)']
         
-        print(f"   正在处理 [{idx+1}/{total_targets}] {pdb_id} (配体: {ligand_id})")
+        # 每10个靶点打印一次进度，避免刷屏
+        if (idx + 1) % 10 == 0 or idx == 0:
+            print(f"   正在处理 [{idx+1}/{total_targets}] {pdb_id} (配体: {ligand_id})")
         
         smiles = get_smiles_by_id(ligand_id)
         if not smiles:
-            print(f"   ⚠️ {pdb_id} 无法获取SMILES，已跳过")
             continue
         
         drugs, msg, total = search_chembl_drugs(smiles, similarity_threshold)
@@ -313,7 +352,7 @@ def batch_analyze_antibacterial_targets(targets_df, similarity_threshold=70):
             drug["RNA结构描述"] = description
             all_results.append(drug)
     
-    print(f"\n✅ 批量分析完成！共匹配到 {len(all_results)} 条抗菌药物记录")
+    print(f"\n✅ 批量分析完成！共匹配到 {len(all_results)} 条药物记录")
     
     # 优先级排序
     print("\n📊 正在进行药物优先级排序...")
@@ -322,14 +361,16 @@ def batch_analyze_antibacterial_targets(targets_df, similarity_threshold=70):
     # 计算优先级分数
     def calculate_priority(row):
         score = 0
-        # 相似度权重：70%
-        score += row["相似度(%)"] * 0.7
+        # 相似度权重：60%
+        score += row["相似度(%)"] * 0.6
         # 药物分类权重：20%
-        if row["药物分类"] == "全身用抗菌药":
+        priority_classes = ["全身用抗菌药", "抗肿瘤药", "抗病毒药", "心血管系统药物"]
+        if row["药物分类"] in priority_classes:
             score += 20
-        # 细菌相关靶点权重：10%
-        if "bacterial" in str(row["RNA结构描述"]).lower():
-            score += 10
+        # 特殊RNA类别权重：20%
+        special_categories = ["核糖开关 (Riboswitch)", "核糖体 (rRNA)", "G-四联体 (G-quadruplex)"]
+        if row["RNA类别"] in special_categories:
+            score += 20
         return round(score, 2)
     
     result_df["优先级分数"] = result_df.apply(calculate_priority, axis=1)
@@ -348,18 +389,22 @@ def batch_analyze_antibacterial_targets(targets_df, similarity_threshold=70):
 # 生成专业HTML报告
 # --------------------------
 def generate_html_report(result_df, targets_df):
-    """生成完整的抗菌药物发现报告"""
+    """生成完整的全RNA药物重定位报告"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # 统计信息
     total_targets = len(targets_df)
     total_drugs = len(result_df)
     unique_drugs = result_df["药物名称"].nunique()
-    top_10_drugs = result_df.head(10).to_html(index=False, classes="table table-striped table-hover")
+    top_20_drugs = result_df.head(20).to_html(index=False, classes="table table-striped table-hover")
     
     # 按RNA类别统计
-    riboswitch_drugs = len(result_df[result_df["RNA类别"] == "核糖开关 (Riboswitch)"])
-    rrna_drugs = len(result_df[result_df["RNA类别"] == "核糖体 (rRNA)"])
+    category_stats = result_df['RNA类别'].value_counts().to_dict()
+    category_stats_html = "".join([f"<li><strong>{cat}</strong>: {count} 条药物记录</li>" for cat, count in category_stats.items()])
+    
+    # 按药物分类统计
+    drug_class_stats = result_df['药物分类'].value_counts().head(10).to_dict()
+    drug_class_stats_html = "".join([f"<li><strong>{cls}</strong>: {count} 条</li>" for cls, count in drug_class_stats.items()])
     
     html_content = f"""
     <!DOCTYPE html>
@@ -367,23 +412,23 @@ def generate_html_report(result_df, targets_df):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>新型抗菌药物靶点发现与设计报告</title>
+        <title>全RNA靶点药物重定位分析报告</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <style>
             body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; }}
-            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem 0; margin-bottom: 2rem; }}
+            .header {{ background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; padding: 2rem 0; margin-bottom: 2rem; }}
             .section {{ margin-bottom: 2rem; padding: 1.5rem; background: #f8f9fa; border-radius: 10px; }}
             .stat-card {{ background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }}
-            .stat-number {{ font-size: 2rem; font-weight: bold; color: #667eea; }}
-            table {{ font-size: 0.9rem; }}
+            .stat-number {{ font-size: 2rem; font-weight: bold; color: #11998e; }}
+            table {{ font-size: 0.85rem; }}
             .footer {{ text-align: center; padding: 2rem; color: #6c757d; border-top: 1px solid #eee; margin-top: 3rem; }}
         </style>
     </head>
     <body>
         <div class="header">
             <div class="container">
-                <h1 class="text-center">🦠 新型抗菌药物靶点发现与设计报告</h1>
-                <p class="text-center lead">基于RNA结构与AIDD药物重定位技术</p>
+                <h1 class="text-center">🧬 全RNA靶点药物重定位分析报告</h1>
+                <p class="text-center lead">基于所有298个PDB RNA结构的系统性药物重定位分析</p>
                 <p class="text-center">报告生成时间: {timestamp}</p>
             </div>
         </div>
@@ -412,54 +457,85 @@ def generate_html_report(result_df, targets_df):
                     </div>
                     <div class="col-md-3">
                         <div class="stat-card">
-                            <div class="stat-number">{riboswitch_drugs}/{rrna_drugs}</div>
-                            <div>核糖开关/核糖体药物</div>
+                            <div class="stat-number">{len(category_stats)}</div>
+                            <div>RNA类别数量</div>
                         </div>
                     </div>
                 </div>
             </div>
 
             <div class="section">
-                <h2>🏆 高优先级候选药物 TOP 10</h2>
-                <p>基于相似度、药物分类和靶点相关性综合排序</p>
-                {top_10_drugs}
+                <h2>📈 数据分布统计</h2>
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>RNA类别药物分布</h5>
+                        <ul>{category_stats_html}</ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>药物分类TOP 10</h5>
+                        <ul>{drug_class_stats_html}</ul>
+                    </div>
+                </div>
             </div>
 
             <div class="section">
-                <h2>💡 实验验证建议</h2>
-                <ol>
-                    <li><strong>最低抑菌浓度(MIC)测定</strong>：首先测试TOP 10药物对目标细菌的体外抗菌活性</li>
-                    <li><strong>结合亲和力验证</strong>：使用等温滴定量热法(ITC)或表面等离子体共振(SPR)验证药物与RNA的结合</li>
-                    <li><strong>作用机制研究</strong>：通过报告基因实验验证药物对RNA功能的调控作用</li>
-                    <li><strong>动物体内实验</strong>：在小鼠感染模型中验证药物的体内疗效</li>
-                    <li><strong>耐药性评估</strong>：测试药物诱导细菌产生耐药性的难易程度</li>
-                </ol>
+                <h2>🏆 高优先级候选药物 TOP 20</h2>
+                <p>基于相似度、药物分类和RNA类别综合排序</p>
+                {top_20_drugs}
             </div>
 
             <div class="section">
-                <h2>🚀 后续研究方向</h2>
-                <ul>
-                    <li><strong>老药新用</strong>：优先开发已上市药物的新适应症，缩短研发周期</li>
-                    <li><strong>结构优化</strong>：基于RNA-配体复合物结构进行药物分子修饰，提高亲和力和特异性</li>
-                    <li><strong>联合用药</strong>：与现有抗生素联合使用，逆转细菌耐药性</li>
-                    <li><strong>兽用抗生素开发</strong>：针对养殖业常见致病菌开发专用药物</li>
-                </ul>
+                <h2>💡 研究建议</h2>
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>🔬 抗菌药物方向</h5>
+                        <ul>
+                            <li>优先关注核糖开关和核糖体靶点</li>
+                            <li>测试氨基糖苷类、大环内酯类药物的抗菌活性</li>
+                            <li>针对超级细菌开发新型RNA靶向药物</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>🎯 抗肿瘤药物方向</h5>
+                        <ul>
+                            <li>重点研究G-四联体靶点</li>
+                            <li>筛选能够稳定G-四联体结构的药物</li>
+                            <li>探索老药新用于肿瘤治疗的可能性</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="row mt-4">
+                    <div class="col-md-6">
+                        <h5>🧠 神经系统疾病方向</h5>
+                        <ul>
+                            <li>关注与神经退行性疾病相关的RNA结构</li>
+                            <li>筛选能够调控RNA功能的小分子</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h5>🦠 抗病毒药物方向</h5>
+                        <ul>
+                            <li>研究病毒RNA结构的保守区域</li>
+                            <li>开发广谱抗病毒药物</li>
+                        </ul>
+                    </div>
+                </div>
             </div>
         </div>
 
         <div class="footer">
             <p>本报告由RNA结构精细化分类与AIDD药物重定位平台自动生成</p>
-            <p>© 2025 抗菌药物研发自动化系统</p>
+            <p>© 2025 全RNA药物重定位自动化系统</p>
         </div>
     </body>
     </html>
     """
     
-    report_path = os.path.join(OUTPUT_DIR, "antibacterial_drug_discovery_report.html")
+    report_path = os.path.join(OUTPUT_DIR, "all_rna_drug_discovery_report.html")
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
     
-    csv_path = os.path.join(OUTPUT_DIR, "antibacterial_candidate_drugs.csv")
+    csv_path = os.path.join(OUTPUT_DIR, "all_rna_candidate_drugs.csv")
     result_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
     
     print(f"\n📄 报告生成完成！")
@@ -472,34 +548,34 @@ def generate_html_report(result_df, targets_df):
 # 主函数：一键运行全流程
 # --------------------------
 def main():
-    print("="*60)
-    print("🦠 全自动新型抗菌药物靶点发现与设计引擎")
-    print("="*60)
+    print("="*70)
+    print("🧬 全RNA靶点药物重定位自动化分析引擎")
+    print("="*70)
     
-    # 步骤1：筛选抗菌靶点
-    targets_df = load_and_filter_antibacterial_targets()
+    # 步骤1：加载所有RNA靶点
+    targets_df = load_all_rna_targets()
     
     if len(targets_df) == 0:
-        print("❌ 未找到任何抗菌RNA靶点")
+        print("❌ 未找到任何有配体的RNA靶点")
         return
     
     # 步骤2：批量药物分析
-    result_df = batch_analyze_antibacterial_targets(targets_df, similarity_threshold=70)
+    result_df = batch_analyze_all_targets(targets_df, similarity_threshold=70)
     
     if len(result_df) == 0:
-        print("❌ 未匹配到任何抗菌药物")
+        print("❌ 未匹配到任何药物")
         return
     
     # 步骤3：生成报告
     report_path, csv_path = generate_html_report(result_df, targets_df)
     
-    print("\n" + "="*60)
-    print("✅ 全自动抗菌药物发现流程完成！")
-    print("="*60)
-    print(f"\n📌 高优先级候选药物TOP 3:")
-    for i in range(min(3, len(result_df))):
+    print("\n" + "="*70)
+    print("✅ 全RNA药物重定位分析完成！")
+    print("="*70)
+    print(f"\n📌 高优先级候选药物TOP 5:")
+    for i in range(min(5, len(result_df))):
         row = result_df.iloc[i]
-        print(f"   {i+1}. {row['药物名称']} (相似度: {row['相似度(%)']}%, 靶点: {row['PDB ID']})")
+        print(f"   {i+1}. {row['药物名称']} (相似度: {row['相似度(%)']}%, RNA类别: {row['RNA类别']}, 靶点: {row['PDB ID']})")
     
     print(f"\n📂 所有结果已保存到 '{OUTPUT_DIR}' 目录")
     print(f"🌐 请打开 {report_path} 查看完整报告")
