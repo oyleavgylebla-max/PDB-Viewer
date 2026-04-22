@@ -1,0 +1,44 @@
+name: 全RNA靶点药物重定位全自动分析
+on:
+  # 支持网页手动点击触发，可自定义相似度阈值
+  workflow_dispatch:
+    inputs:
+      similarity_threshold:
+        description: '药物结构相似度阈值 (%)'
+        required: true
+        default: '70'
+        type: string
+
+jobs:
+  run-full-analysis:
+    runs-on: ubuntu-latest
+    # 【修复警告1】全局强制所有Action运行在 Node.js 24 环境
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      # 【版本升级】全部Action升级到兼容Node24的最新稳定大版本
+      - name: 检出仓库全部代码
+        uses: actions/checkout@v4.2.2
+
+      - name: 配置Python运行环境
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装Python依赖库
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl requests
+
+      - name: 运行全靶点自动化分析脚本
+        run: python auto_antibacterial_discovery.py
+
+      # 【修复警告2】修改为脚本最新正确输出文件夹路径
+      - name: 上传全部分析结果文件
+        uses: actions/upload-artifact@v4.4.0
+        with:
+          name: 全RNA靶点药物分析完整结果
+          # 对应你最新脚本里的OUTPUT_DIR输出目录
+          path: all_rna_drug_discovery_results/
+          retention-days: 60
