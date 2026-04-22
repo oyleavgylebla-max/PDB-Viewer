@@ -8,9 +8,9 @@ from functools import lru_cache
 from tqdm import tqdm
 
 # =============================================================================
-# 🧬 RNA靶点AIDD药物重定位 全自动工作流（含靶点不同确认）
-# 版本: 2.0 完整科研版
-# 新增功能: 自动查询ChEMBL数据库，确认预测靶点与药物已知靶点不同
+# 🧬 RNA靶点AIDD药物重定位 全自动工作流（靶点查询修复版）
+# 版本: 2.1 修复版
+# 修复内容: 优化ChEMBL API查询逻辑，解决药物靶点查询失败问题
 # =============================================================================
 
 # ======================================
@@ -291,10 +291,10 @@ def search_similar_drugs(smiles, similarity_threshold):
         return [], f"请求异常: {str(e)}", 0
 
 # ======================================
-# 🔍 新增：靶点不同确认核心模块
+# 🔍 修复版：靶点不同确认核心模块
 # ======================================
 def get_drug_known_targets_cached(drug_name):
-    """带缓存的靶点查询"""
+    """带缓存的靶点查询（修复大小写和API问题）"""
     target_cache = load_cache(TARGET_CACHE_FILE)
     drug_name_key = drug_name.upper().strip()
     
@@ -302,8 +302,13 @@ def get_drug_known_targets_cached(drug_name):
         return target_cache[drug_name_key]["types"], target_cache[drug_name_key]["descs"]
     
     try:
-        search_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?pref_name__iexact={urllib.parse.quote(drug_name)}&format=json"
-        r = requests.get(search_url, headers=REQUEST_HEADERS, timeout=10)
+        # 修复1：不区分大小写查询
+        search_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule?format=json"
+        params = {
+            "pref_name__icontains": drug_name.strip(),
+            "limit": 10
+        }
+        r = requests.get(search_url, params=params, headers=REQUEST_HEADERS, timeout=10)
         if r.status_code != 200:
             return set(), []
         
@@ -311,32 +316,32 @@ def get_drug_known_targets_cached(drug_name):
         if not data.get("molecules"):
             return set(), []
         
-        mol_chembl_id = data["molecules"][0]["molecule_chembl_id"]
+        # 优先选择完全匹配的
+        mol_chembl_id = None
+        for mol in data["molecules"]:
+            if mol.get("pref_name", "").upper().strip() == drug_name_key:
+                mol_chembl_id = mol["molecule_chembl_id"]
+                break
         
-        target_url = f"https://www.ebi.ac.uk/chembl/api/data/activity?molecule_chembl_id={mol_chembl_id}&limit=50&format=json"
+        # 如果没有完全匹配，取第一个
+        if not mol_chembl_id:
+            mol_chembl_id = data["molecules"][0]["molecule_chembl_id"]
+        
+        # 修复2：改用更可靠的靶点接口
+        target_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{mol_chembl_id}/targets?format=json"
         r2 = requests.get(target_url, headers=REQUEST_HEADERS, timeout=10)
         if r2.status_code != 200:
             return set(), []
         
-        activity_data = r2.json()
+        target_data = r2.json()
         target_types = set()
         target_descriptions = []
         
-        for activity in activity_data.get("activities", []):
-            if "target_chembl_id" in activity:
-                try:
-                    target_detail_url = f"https://www.ebi.ac.uk/chembl/api/data/target/{activity['target_chembl_id']}?format=json"
-                    r3 = requests.get(target_detail_url, headers=REQUEST_HEADERS, timeout=5)
-                    if r3.status_code == 200:
-                        target_data = r3.json()
-                        if "targets" in target_data and target_data["targets"]:
-                            t = target_data["targets"][0]
-                            target_type = t.get("target_type", "UNKNOWN")
-                            target_desc = t.get("pref_name", "")
-                            target_types.add(target_type.upper())
-                            target_descriptions.append(target_desc)
-                except:
-                    pass
+        for target in target_data.get("targets", []):
+            target_type = target.get("target_type", "UNKNOWN")
+            target_desc = target.get("pref_name", "")
+            target_types.add(target_type.upper())
+            target_descriptions.append(target_desc)
         
         target_descriptions = list(set(target_descriptions))
         
@@ -381,7 +386,7 @@ def is_confirmed_different_target(row):
 # ======================================
 def main_workflow():
     print("="*80)
-    print("🧬 RNA靶点AIDD药物重定位 全自动工作流（含靶点不同确认）")
+    print("🧬 RNA靶点AIDD药物重定位 全自动工作流（靶点查询修复版）")
     print("="*80)
 
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
