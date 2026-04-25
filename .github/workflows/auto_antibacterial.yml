@@ -1,33 +1,27 @@
 name: 全RNA靶点药物重定位分析
 on:
+  # 手动触发运行
   workflow_dispatch:
     inputs:
-      mode:
-        description: '分析模式 (all/antibacterial)'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - antibacterial
       similarity_threshold:
         description: '药物相似度阈值 (%)'
         required: true
-        default: '40'
+        default: '70'
         type: string
 
 jobs:
   run-analysis:
     runs-on: ubuntu-latest
+    # 强制使用Node.js 24，提前解决弃用问题
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v5  # 升级到支持Node.js 24的版本
 
       - name: 设置Python环境
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v6  # 升级到支持Node.js 24的版本
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -37,39 +31,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 运行药物重定位分析
+      - name: 运行全RNA药物重定位分析
         run: |
-          python auto_antibacterial_discovery.py ${{ github.event.inputs.mode }} ${{ github.event.inputs.similarity_threshold }}
-        continue-on-error: true  # 即使脚本出错也继续执行后续步骤
-
-      - name: 检查输出目录并生成兜底文件
-        run: |
-          # 动态获取输出目录
-          if [ "${{ github.event.inputs.mode }}" = "antibacterial" ]; then
-            OUTPUT_DIR="antibacterial_results"
-          else
-            OUTPUT_DIR="all_rna_drug_discovery_results"
-          fi
-          
-          # 如果目录不存在则创建
-          mkdir -p $OUTPUT_DIR
-          
-          # 如果目录为空则生成说明文件
-          if [ -z "$(ls -A $OUTPUT_DIR)" ]; then
-            echo "⚠️ 未匹配到任何药物，生成空结果说明" > $OUTPUT_DIR/空结果说明.txt
-            echo "分析时间: $(date)" >> $OUTPUT_DIR/空结果说明.txt
-            echo "分析模式: ${{ github.event.inputs.mode }}" >> $OUTPUT_DIR/空结果说明.txt
-            echo "相似度阈值: ${{ github.event.inputs.similarity_threshold }}%" >> $OUTPUT_DIR/空结果说明.txt
-            echo "可能原因: 1. 阈值过高 2. 靶点数据不足 3. API调用失败" >> $OUTPUT_DIR/空结果说明.txt
-          fi
-          
-          # 列出目录内容用于调试
-          echo "📂 输出目录内容:"
-          ls -la $OUTPUT_DIR
+          python auto_antibacterial_discovery.py
 
       - name: 上传分析结果
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v5  # 升级到支持Node.js 24的版本
         with:
-          name: ${{ github.event.inputs.mode }}_药物重定位分析结果_阈值${{ github.event.inputs.similarity_threshold }}%
-          path: ${{ github.event.inputs.mode == 'antibacterial' && 'antibacterial_results/' || 'all_rna_drug_discovery_results/' }}
-          retention-days: 30
+          name: 全RNA药物重定位分析结果
+          path: all_rna_drug_discovery_results/  # 修复：更新为新的输出目录
+          retention-days: 30  # 结果保留30天
