@@ -3,10 +3,18 @@ on:
   # 手动触发运行
   workflow_dispatch:
     inputs:
+      mode:
+        description: '分析模式 (all/antibacterial)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - antibacterial
       similarity_threshold:
         description: '药物相似度阈值 (%)'
         required: true
-        default: '70'
+        default: '40'  # 调整默认阈值为40%
         type: string
 
 jobs:
@@ -31,13 +39,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 运行全RNA药物重定位分析
+      - name: 运行药物重定位分析
         run: |
-          python auto_antibacterial_discovery.py
+          # 传递模式和相似度阈值参数到Python脚本
+          python auto_antibacterial_discovery.py ${{ github.event.inputs.mode }} ${{ github.event.inputs.similarity_threshold }}
 
       - name: 上传分析结果
         uses: actions/upload-artifact@v5  # 升级到支持Node.js 24的版本
         with:
-          name: 全RNA药物重定位分析结果
-          path: all_rna_drug_discovery_results/  # 修复：更新为新的输出目录
+          name: ${{ github.event.inputs.mode }}_药物重定位分析结果_阈值${{ github.event.inputs.similarity_threshold }}%
+          path: ${{ github.event.inputs.mode == 'antibacterial' && 'antibacterial_results/' || 'all_rna_drug_discovery_results/' }}
           retention-days: 30  # 结果保留30天
