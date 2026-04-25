@@ -1,14 +1,27 @@
-name: RNA-AIDD 自动化分析工作流（全自动API版）
+name: RNA-AIDD 自动化分析工作流（可选择阈值）
 
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:   # 允许手动点一下运行
+  workflow_dispatch:
+    inputs:
+      similarity_threshold:
+        description: "相似度阈值 (%)"
+        required: true
+        default: "70"
+        type: choice
+        options:
+          - "40"
+          - "50"
+          - "60"
+          - "70"
+          - "80"
+          - "90"
 
 jobs:
   run-analysis:
     runs-on: ubuntu-latest
-    timeout-minutes: 180  # ✅ 已更新：给API请求足够时间
+    timeout-minutes: 180
 
     steps:
       - name: 拉取代码
@@ -24,11 +37,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas requests tqdm openpyxl
 
-      - name: 运行 AIDD 全自动分析（API自动获取适应症和靶点）
-        run: python rna_aidd_workflow.py
+      - name: 运行 AIDD 全自动分析（阈值：${{ inputs.similarity_threshold }}%）
+        run: python rna_aidd_workflow.py ${{ inputs.similarity_threshold }}
 
       - name: 上传分析结果
         uses: actions/upload-artifact@v4
         with:
-          name: RNA-AIDD-分析结果(全自动API版)
+          name: RNA-AIDD-分析结果(阈值${{ inputs.similarity_threshold }}%)
           path: rna_aidd_workflow_output_auto/
