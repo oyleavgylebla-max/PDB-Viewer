@@ -1,6 +1,4 @@
-# RNA 靶点 AIDD 老药新用 全自动云端工作流
-# GitHub Actions 自动运行 → 自动出结果
-name: RNA-AIDD 自动化分析工作流
+name: RNA-AIDD 自动化分析工作流（全自动API版）
 
 on:
   push:
@@ -10,7 +8,7 @@ on:
 jobs:
   run-analysis:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 180  # ✅ 已更新：给API请求足够时间
 
     steps:
       - name: 拉取代码
@@ -26,11 +24,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas requests tqdm openpyxl
 
-      - name: 运行 AIDD 全自动分析
+      - name: 运行 AIDD 全自动分析（API自动获取适应症和靶点）
         run: python rna_aidd_workflow.py
 
       - name: 上传分析结果
         uses: actions/upload-artifact@v4
         with:
-          name: RNA-AIDD-分析结果
-          path: rna_aidd_workflow_output/
+          name: RNA-AIDD-分析结果(全自动API版)
+          path: rna_aidd_workflow_output_auto/
