@@ -4,18 +4,26 @@ import urllib.parse
 import json
 import os
 import time
+import sys
 from functools import lru_cache
 from tqdm import tqdm
 
 # =============================================================================
-# 🧬 RNA靶点AIDD药物重定位 全自动工作流（全自动API版）
-# 核心升级: 自动从ChEMBL+PubChem获取适应症和官方靶点，无需手动补充字典
+# 🧬 RNA靶点AIDD药物重定位 全自动工作流（最终完整版）
+# 版本: 3.0 最终版
+# 核心功能:
+# 1. 支持命令行参数选择相似度阈值（GitHub Actions运行时可选）
+# 2. 全自动从ChEMBL+PubChem获取适应症和官方靶点
+# 3. 自动修复药物名称截断、自动处理盐型药物
+# 4. 智能缓存机制，无需手动维护字典
 # =============================================================================
 
 # ======================================
 # 🔧 【用户可配置参数区】
 # ======================================
-MIN_SIMILARITY = 40
+# 注意：如果从GitHub Actions运行，会自动使用你选择的阈值
+# 如果本地运行，默认使用下面的 DEFAULT_SIMILARITY
+DEFAULT_SIMILARITY = 70
 TARGET_RNA_CATEGORIES = [
     "核糖开关 (Riboswitch)",
     "核糖体 (rRNA)",
@@ -38,8 +46,8 @@ PDB_EXCEL_PATH = "PDB_Dataset_Info_Full.xlsx"
 OUTPUT_FOLDER = "rna_aidd_workflow_output_auto"
 SMILES_CACHE_FILE = "cache_smiles.json"
 DRUG_CACHE_FILE = "cache_drugs.json"
-TARGET_CACHE_FILE = "cache_targets_auto.json"  # 自动靶点缓存
-INDICATION_CACHE_FILE = "cache_indications_auto.json"  # 自动适应症缓存
+TARGET_CACHE_FILE = "cache_targets_auto.json"
+INDICATION_CACHE_FILE = "cache_indications_auto.json"
 REQUEST_TIMEOUT = 20
 MAX_RETRIES = 3
 RETRY_DELAY = 2
@@ -136,12 +144,11 @@ def save_cache(cache_dict, cache_file):
         print(f"[警告] 缓存保存失败: {e}")
 
 # ======================================
-# ✨ 新增：全自动API获取模块
+# ✨ 全自动API获取模块
 # ======================================
 def get_base_drug_name(drug_name):
     """提取药物基础名称（去除盐型和后缀）"""
     drug_name_upper = str(drug_name).upper().strip()
-    # 去除常见盐型后缀
     suffixes = [
         ' SULFATE', ' HYDROCHLORIDE', ' HCL', ' SODIUM', ' POTASSIUM',
         ' CALCIUM', ' PHOSPHATE', ' ACETATE', ' MALEATE', ' FUMARATE',
@@ -161,18 +168,15 @@ def get_drug_indication_auto(drug_name):
     base_name = get_base_drug_name(drug_name_fixed)
     cache_key = base_name.upper()
     
-    # 先查缓存
     indication_cache = load_cache(INDICATION_CACHE_FILE)
     if cache_key in indication_cache:
         return indication_cache[cache_key]
     
-    # 优先查基础手动字典
     if cache_key in BASE_MANUAL_INDICATION:
         indication_cache[cache_key] = BASE_MANUAL_INDICATION[cache_key]
         save_cache(indication_cache, INDICATION_CACHE_FILE)
         return BASE_MANUAL_INDICATION[cache_key]
     
-    # 1. 从ChEMBL获取适应症
     try:
         search_url = "https://www.ebi.ac.uk/chembl/api/data/molecule"
         params = {
@@ -184,7 +188,6 @@ def get_drug_indication_auto(drug_name):
         if r.status_code == 200:
             data = r.json()
             if data.get("molecules"):
-                # 找完全匹配的
                 mol_chembl_id = None
                 for mol in data["molecules"]:
                     if get_base_drug_name(mol.get("pref_name", "")) == cache_key:
@@ -193,7 +196,6 @@ def get_drug_indication_auto(drug_name):
                 if not mol_chembl_id:
                     mol_chembl_id = data["molecules"][0]["molecule_chembl_id"]
                 
-                # 获取适应症
                 indication_url = f"https://www.ebi.ac.uk/chembl/api/data/drug_indication?molecule_chembl_id={mol_chembl_id}&limit=20&format=json"
                 r2 = requests.get(indication_url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
                 if r2.status_code == 200:
@@ -208,7 +210,6 @@ def get_drug_indication_auto(drug_name):
                             elif efo_term:
                                 indication_list.append(efo_term)
                         if indication_list:
-                            # 去重并取前5个
                             unique_indications = list(set(indication_list))[:5]
                             result = "、".join(unique_indications)
                             indication_cache[cache_key] = result
@@ -217,7 +218,6 @@ def get_drug_indication_auto(drug_name):
     except:
         pass
     
-    # 2. ChEMBL失败，从PubChem获取
     try:
         search_url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{urllib.parse.quote(base_name)}/property/Title,Indication/JSON"
         r = requests.get(search_url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
@@ -226,7 +226,6 @@ def get_drug_indication_auto(drug_name):
             if "PropertyTable" in data and "Properties" in data["PropertyTable"]:
                 props = data["PropertyTable"]["Properties"][0]
                 if "Indication" in props and props["Indication"]:
-                    # 截断过长的适应症
                     indication = props["Indication"][:200]
                     if len(props["Indication"]) > 200:
                         indication += "..."
@@ -236,7 +235,6 @@ def get_drug_indication_auto(drug_name):
     except:
         pass
     
-    # 兜底
     result = "需参考药品说明书或最新临床研究"
     indication_cache[cache_key] = result
     save_cache(indication_cache, INDICATION_CACHE_FILE)
@@ -249,18 +247,15 @@ def get_drug_target_auto(drug_name):
     base_name = get_base_drug_name(drug_name_fixed)
     cache_key = base_name.upper()
     
-    # 先查缓存
     target_cache = load_cache(TARGET_CACHE_FILE)
     if cache_key in target_cache:
         return target_cache[cache_key]
     
-    # 优先查基础手动字典
     if cache_key in BASE_MANUAL_TARGET:
         target_cache[cache_key] = BASE_MANUAL_TARGET[cache_key]
         save_cache(target_cache, TARGET_CACHE_FILE)
         return BASE_MANUAL_TARGET[cache_key]
     
-    # 1. 从ChEMBL获取靶点
     try:
         search_url = "https://www.ebi.ac.uk/chembl/api/data/molecule"
         params = {
@@ -272,7 +267,6 @@ def get_drug_target_auto(drug_name):
         if r.status_code == 200:
             data = r.json()
             if data.get("molecules"):
-                # 找完全匹配的
                 mol_chembl_id = None
                 for mol in data["molecules"]:
                     if get_base_drug_name(mol.get("pref_name", "")) == cache_key:
@@ -281,7 +275,6 @@ def get_drug_target_auto(drug_name):
                 if not mol_chembl_id:
                     mol_chembl_id = data["molecules"][0]["molecule_chembl_id"]
                 
-                # 获取靶点
                 target_url = f"https://www.ebi.ac.uk/chembl/api/data/molecule/{mol_chembl_id}/targets?limit=10&format=json"
                 r2 = requests.get(target_url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
                 if r2.status_code == 200:
@@ -297,7 +290,6 @@ def get_drug_target_auto(drug_name):
                                 else:
                                     target_list.append(target_name)
                         if target_list:
-                            # 去重并取前5个
                             unique_targets = list(set(target_list))[:5]
                             result = "、".join(unique_targets) + "（来源：ChEMBL）"
                             target_cache[cache_key] = result
@@ -306,7 +298,6 @@ def get_drug_target_auto(drug_name):
     except:
         pass
     
-    # 2. ChEMBL失败，从PubChem获取
     try:
         search_url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{urllib.parse.quote(base_name)}/property/Title,Target/JSON"
         r = requests.get(search_url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
@@ -315,7 +306,6 @@ def get_drug_target_auto(drug_name):
             if "PropertyTable" in data and "Properties" in data["PropertyTable"]:
                 props = data["PropertyTable"]["Properties"][0]
                 if "Target" in props and props["Target"]:
-                    # 截断过长的靶点信息
                     target = props["Target"][:200]
                     if len(props["Target"]) > 200:
                         target += "..."
@@ -326,7 +316,6 @@ def get_drug_target_auto(drug_name):
     except:
         pass
     
-    # 兜底
     result = "未查询到明确靶点信息"
     target_cache[cache_key] = result
     save_cache(target_cache, TARGET_CACHE_FILE)
@@ -454,7 +443,6 @@ def search_similar_drugs(smiles, similarity_threshold):
                 drug_name = m.get('pref_name', '').upper()
                 drug_name_fixed = fix_drug_name(drug_name)
                 
-                # ✅ 全自动获取适应症
                 indication = get_drug_indication_auto(drug_name_fixed)
                 
                 drug_class = "未分类"
@@ -491,10 +479,8 @@ def is_confirmed_different_target(row):
     drug_name = row["药物名称"]
     predicted_rna_category = row["RNA类别"]
     
-    # ✅ 全自动获取官方靶点
     official_target = get_drug_target_auto(drug_name)
     
-    # 判断靶点类型
     has_rna_target = False
     if "RNA" in official_target or "RIBOSOME" in official_target or "核糖体" in official_target:
         has_rna_target = True
@@ -518,10 +504,24 @@ def is_confirmed_different_target(row):
 # ======================================
 def main_workflow():
     print("="*80)
-    print("🧬 RNA靶点AIDD药物重定位 全自动工作流（API自动获取版）")
+    print("🧬 RNA靶点AIDD药物重定位 全自动工作流（最终完整版）")
     print("="*80)
+    
+    # ✅ 读取命令行参数作为相似度阈值
+    global MIN_SIMILARITY
+    if len(sys.argv) > 1:
+        try:
+            MIN_SIMILARITY = int(sys.argv[1])
+            print(f"✅ 使用命令行指定的相似度阈值: ≥{MIN_SIMILARITY}%")
+        except:
+            MIN_SIMILARITY = DEFAULT_SIMILARITY
+            print(f"⚠️ 命令行参数无效，使用默认阈值: ≥{MIN_SIMILARITY}%")
+    else:
+        MIN_SIMILARITY = DEFAULT_SIMILARITY
+        print(f"✅ 使用默认相似度阈值: ≥{MIN_SIMILARITY}%")
+    
     print("✅ 核心功能：自动从ChEMBL+PubChem获取适应症和官方靶点")
-    print("✅ 无需手动维护字典，覆盖99%以上上市药物")
+    print("✅ 支持GitHub Actions运行时选择阈值")
     print("="*80)
 
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -587,7 +587,7 @@ def main_workflow():
             "判断理由": reason,
             "上市药物官方靶点": official_target
         })
-        time.sleep(0.2)  # 避免API请求过快
+        time.sleep(0.2)
 
     confirmation_df = pd.DataFrame(confirmation_results)
     pre_filtered = pd.concat([pre_filtered.reset_index(drop=True), confirmation_df], axis=1)
@@ -603,7 +603,7 @@ def main_workflow():
     print(f"   - 确认靶点不同候选数：{len(final_filtered)}")
     print(f"   - 排除已知RNA靶向药数：{len(pre_filtered) - len(final_filtered)}")
 
-    print(f"[6/7] 开始输出全自动版结果文件")
+    print(f"[6/7] 开始输出最终版结果文件")
     column_order = [
         "RNA类别", "PDB ID", "核心配体ID", "RNA结构描述",
         "药物名称", "修复后药物名称", "ChEMBL ID",
@@ -614,17 +614,16 @@ def main_workflow():
     final_filtered = final_filtered[[col for col in column_order if col in final_filtered.columns]]
     
     full_result_df.to_csv(f"{OUTPUT_FOLDER}/02_全库RNA-药物完整匹配结果.csv", index=False, encoding="utf-8-sig")
-    final_filtered.to_csv(f"{OUTPUT_FOLDER}/03_RNA靶向老药新用高价值候选清单(全自动版).csv", index=False, encoding="utf-8-sig")
-    final_filtered.to_excel(f"{OUTPUT_FOLDER}/03_RNA靶向老药新用高价值候选清单(全自动版).xlsx", index=False)
+    final_filtered.to_csv(f"{OUTPUT_FOLDER}/03_RNA靶向老药新用高价值候选清单(最终版).csv", index=False, encoding="utf-8-sig")
+    final_filtered.to_excel(f"{OUTPUT_FOLDER}/03_RNA靶向老药新用高价值候选清单(最终版).xlsx", index=False)
     
     report_content = [
         "="*60,
-        "RNA靶点AIDD药物重定位工作流 统计报告（全自动API版）",
+        "RNA靶点AIDD药物重定位工作流 统计报告（最终完整版）",
         "="*60,
         f"分析时间: {time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"相似度阈值: ≥{MIN_SIMILARITY}%",
-        f"核心升级: 自动从ChEMBL+PubChem获取适应症和官方靶点",
-        f"覆盖范围: 99%以上上市药物，无需手动维护字典",
+        f"核心升级: 1.支持运行时选择阈值 2.全自动API获取适应症和靶点",
         "",
         "一、基础数据统计",
         f"1. 总RNA结构数量: {len(df)}个",
@@ -650,17 +649,17 @@ def main_workflow():
         final_filtered["判断理由"].value_counts().to_string(),
         "",
         "="*60,
-        "报告结束（全自动版）",
+        "报告结束（最终完整版）",
         "="*60
     ]
-    with open(f"{OUTPUT_FOLDER}/04_科研统计报告(全自动版).txt", "w", encoding="utf-8") as f:
+    with open(f"{OUTPUT_FOLDER}/04_科研统计报告(最终版).txt", "w", encoding="utf-8") as f:
         f.write("\n".join(report_content))
 
     print("="*80)
-    print("🎉 全自动版工作流执行完成！")
+    print("🎉 最终完整版工作流执行完成！")
     print("="*80)
     print("\n📊 核心功能验证:")
-    print(f"✅ 相似度阈值: ≥{MIN_SIMILARITY}%")
+    print(f"✅ 相似度阈值: ≥{MIN_SIMILARITY}%（可在GitHub Actions运行时选择）")
     print(f"✅ 全自动适应症获取: 覆盖所有匹配药物")
     print(f"✅ 全自动官方靶点获取: 覆盖所有匹配药物")
     print(f"✅ 盐型药物自动处理: 自动继承基础药物信息")
