@@ -19,158 +19,80 @@ from datetime import datetime
 # --------------------------
 SMILES_CACHE_FILE = "smiles_cache.json"
 DRUG_SEARCH_CACHE_FILE = "drug_search_cache.json"
-DRUG_INDICATION_CACHE_FILE = "drug_indication_cache.json"  # 新增适应症缓存
-DRUG_TARGET_CACHE_FILE = "drug_target_cache.json"  # 新增靶点缓存
 
 # 输出目录（与GitHub Actions工作流完全一致）
 ALL_RNA_OUTPUT_DIR = "all_rna_drug_discovery_results"
 ANTIBACTERIAL_OUTPUT_DIR = "antibacterial_results"
 
-# ... 保留原有ATC/适应症映射字典（ATC_FULL_MAP/ATC_CLASS_MAP/INDICATION_CN_MAP/MANUAL_DRUG_INDICATION） ...
+# ATC分类与适应症映射（完整版）
+ATC_FULL_MAP = {
+    "A01": "口腔病用药", "A02": "治疗胃酸相关疾病的药物", "A03": "治疗功能性胃肠道疾病的药物",
+    "A04": "止吐药和止恶心药", "A05": "胆和肝治疗药", "A06": "轻泻药", "A07": "肠道抗感染药和肠道消炎药",
+    "A08": "减肥药", "A09": "消化药，包括酶", "A10": "糖尿病用药", "A11": "维生素类", "A12": "矿物质补充剂",
+    "A13": "滋补药", "A14": "全身用蛋白同化类固醇", "A15": "食欲刺激药", "A16": "其他消化道和代谢药物",
+    "B01": "抗血栓药", "B02": "止血药", "B03": "抗贫血药", "B05": "血液代用品和灌注液",
+    "B06": "其他血液系统用药",
+    "C01": "心脏治疗药", "C02": "抗高血压药", "C03": "利尿药", "C04": "外周血管扩张药",
+    "C05": "血管保护剂", "C07": "β受体阻滞剂", "C08": "钙通道阻滞剂", "C09": "作用于肾素-血管紧张素系统的药物",
+    "C10": "血脂调节剂",
+    "D01": "皮肤用抗真菌药", "D02": "润肤剂和保护剂", "D03": "皮肤用皮质类固醇",
+    "D04": "止痒药，包括抗组胺药、麻醉药", "D05": "银屑病用药", "D06": "皮肤用抗生素和化疗药",
+    "D07": "皮肤用皮质类固醇和抗生素的复方制剂", "D08": "皮肤用消毒剂和防腐剂",
+    "D09": "伤口敷料和保护剂", "D10": "痤疮用药", "D11": "其他皮肤科用药",
+    "J01": "全身用抗菌药", "J02": "全身用抗真菌药", "J04": "抗分枝杆菌药", "J05": "全身用抗病毒药",
+    "J06": "免疫血清和免疫球蛋白", "J07": "疫苗",
+    "L01": "抗肿瘤药", "L02": "内分泌治疗药", "L03": "免疫刺激剂", "L04": "免疫抑制剂",
+    "M01": "抗炎和抗风湿药", "M02": "局部用肌肉骨骼系统药物", "M03": "肌肉松弛药",
+    "M04": "抗痛风药", "M05": "治疗骨病的药物",
+    "N01": "麻醉药", "N02": "镇痛药", "N03": "抗癫痫药", "N04": "抗帕金森病药",
+    "N05": "精神安定药", "N06": "精神兴奋药", "N07": "其他神经系统药物",
+    "R01": "鼻腔用药", "R02": "咽喉用药", "R03": "用于阻塞性气道疾病的药物",
+    "R05": "咳嗽和感冒用药", "R06": "全身用抗组胺药", "R07": "其他呼吸系统药物"
+}
+
+ATC_CLASS_MAP = {
+    "A": "消化系统及代谢药", "B": "血液和造血系统药物", "C": "心血管系统药物",
+    "D": "皮肤科用药", "G": "泌尿生殖系统药和性激素", "H": "全身用激素类制剂",
+    "J": "全身用抗感染药", "L": "抗肿瘤药和免疫调节剂", "M": "肌肉-骨骼系统药物",
+    "N": "神经系统药物", "P": "抗寄生虫药", "R": "呼吸系统药物",
+    "S": "感觉器官药物", "V": "其他药品"
+}
+
+INDICATION_CN_MAP = {
+    "cancer": "癌症", "tumor": "肿瘤", "carcinoma": "恶性肿瘤", "leukemia": "白血病",
+    "hiv": "艾滋病", "influenza": "流感", "hepatitis": "肝炎", "bacterial infection": "细菌感染",
+    "diabetes": "糖尿病", "obesity": "肥胖症", "hypertension": "高血压", "cardiovascular": "心血管疾病",
+    "alzheimer": "阿尔茨海默病", "parkinson": "帕金森病", "arthritis": "关节炎", "asthma": "哮喘",
+    "depression": "抑郁症", "pain": "疼痛", "inflammation": "炎症", "fungal infection": "真菌感染",
+    "virus infection": "病毒感染", "thromboembolism": "血栓栓塞", "stroke": "中风",
+    "psychosis": "精神病", "schizophrenia": "精神分裂症", "epilepsy": "癫痫",
+    "gastroesophageal reflux": "胃食管反流", "ulcer": "消化道溃疡", "anemia": "贫血",
+    "glaucoma": "青光眼", "migraine": "偏头痛", "osteoporosis": "骨质疏松症",
+    "infection": "感染性疾病", "autoimmune": "自身免疫性疾病", "neuropathic pain": "神经病理性疼痛",
+    "tuberculosis": "结核病", "malaria": "疟疾", "pneumonia": "肺炎", "sepsis": "脓毒症"
+}
+
+MANUAL_DRUG_INDICATION = {
+    "PAROMOMYCIN": "肠道阿米巴病、细菌性痢疾",
+    "PAROMOMYCIN SULFATE": "肠道阿米巴病、细菌性痢疾",
+    "NETILMICIN": "敏感菌所致的呼吸道、泌尿道、皮肤软组织感染",
+    "NETILMICIN SULFATE": "敏感菌所致的呼吸道、泌尿道、皮肤软组织感染",
+    "KANAMYCIN": "敏感菌所致的严重感染",
+    "KANAMYCIN SULFATE": "敏感菌所致的严重感染",
+    "GENTAMICIN": "革兰氏阴性菌所致的严重感染",
+    "GENTAMICIN SULFATE": "革兰氏阴性菌所致的严重感染",
+    "TOBRAMYCIN": "铜绿假单胞菌等革兰氏阴性菌感染",
+    "TOBRAMYCIN SULFATE": "铜绿假单胞菌等革兰氏阴性菌感染",
+    "AMIKACIN": "敏感菌所致的严重感染",
+    "AMIKACIN SULFATE": "敏感菌所致的严重感染",
+    "STREPTOMYCIN": "结核病、鼠疫",
+    "STREPTOMYCIN SULFATE": "结核病、鼠疫",
+    "ERYTHROMYCIN": "呼吸道感染、皮肤软组织感染",
+    "TETRACYCLINE": "立克次体病、支原体肺炎"
+}
 
 # --------------------------
-# 新增：药物适应症补全 & 官方靶点获取函数
-# --------------------------
-@lru_cache(maxsize=500)
-def get_drug_indication_by_name(drug_name):
-    """通过药物名称补全适应症（优先ChEMBL，其次PubChem）"""
-    if not drug_name:
-        return "暂无明确适应症"
-    
-    drug_name_clean = drug_name.strip().upper()
-    cache = load_cache(DRUG_INDICATION_CACHE_FILE)
-    
-    # 1. 先查缓存
-    if drug_name_clean in cache:
-        return cache[drug_name_clean]
-    
-    # 2. 查手动映射表
-    if drug_name_clean in MANUAL_DRUG_INDICATION:
-        cache[drug_name_clean] = MANUAL_DRUG_INDICATION[drug_name_clean]
-        save_cache(cache, DRUG_INDICATION_CACHE_FILE)
-        return MANUAL_DRUG_INDICATION[drug_name_clean]
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json"
-    }
-    indication = "暂无明确适应症"
-    max_retries = 2
-    retry_delay = 1
-
-    # 3. 调用ChEMBL API按药物名称查适应症
-    try:
-        safe_name = urllib.parse.quote(drug_name_clean)
-        for attempt in range(max_retries):
-            try:
-                # 先查药物ID
-                url = f"https://www.ebi.ac.uk/chembl/api/data/drug.json?pref_name={safe_name}&limit=1"
-                r = requests.get(url, headers=headers, timeout=10)
-                if r.status_code == 200 and r.json().get('drugs'):
-                    drug_id = r.json()['drugs'][0]['drug_chembl_id']
-                    # 查药物适应症
-                    url2 = f"https://www.ebi.ac.uk/chembl/api/data/drug_indication.json?drug_chembl_id={drug_id}&limit=10"
-                    r2 = requests.get(url2, headers=headers, timeout=10)
-                    if r2.status_code == 200 and r2.json().get('drug_indications'):
-                        indications = []
-                        for ind in r2.json()['drug_indications']:
-                            if ind.get('indication_description'):
-                                indications.append(ind['indication_description'])
-                        if indications:
-                            indication = "、".join(list(set(indications)))
-                            break
-            except Exception as e:
-                time.sleep(retry_delay)
-                continue
-    except:
-        pass
-
-    # 4. ChEMBL查不到则查PubChem
-    if indication == "暂无明确适应症":
-        try:
-            safe_name = urllib.parse.quote(drug_name_clean)
-            url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{safe_name}/description/JSON"
-            r = requests.get(url, headers=headers, timeout=10)
-            if r.status_code == 200 and r.json().get('InformationList', {}).get('Information'):
-                desc = r.json()['InformationList']['Information'][0].get('Description', '')
-                if desc and "indication" in desc.lower():
-                    # 提取适应症相关内容
-                    import re
-                    ind_match = re.search(r'indication[s]?: (.+?)(\.|;|$)', desc, re.IGNORECASE)
-                    if ind_match:
-                        indication = ind_match.group(1).strip()
-        except:
-            pass
-
-    # 5. 缓存结果
-    cache[drug_name_clean] = indication if indication != "" else "暂无明确适应症"
-    save_cache(cache, DRUG_INDICATION_CACHE_FILE)
-    
-    return cache[drug_name_clean]
-
-@lru_cache(maxsize=500)
-def get_drug_targets_by_name(drug_name):
-    """获取上市药物的官方靶点（ChEMBL API）"""
-    if not drug_name:
-        return "暂无靶点信息"
-    
-    drug_name_clean = drug_name.strip().upper()
-    cache = load_cache(DRUG_TARGET_CACHE_FILE)
-    
-    # 1. 先查缓存
-    if drug_name_clean in cache:
-        return cache[drug_name_clean]
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json"
-    }
-    targets = "暂无靶点信息"
-    max_retries = 2
-    retry_delay = 1
-
-    # 2. 调用ChEMBL API查靶点
-    try:
-        safe_name = urllib.parse.quote(drug_name_clean)
-        for attempt in range(max_retries):
-            try:
-                # 先查药物ID
-                url = f"https://www.ebi.ac.uk/chembl/api/data/drug.json?pref_name={safe_name}&limit=1"
-                r = requests.get(url, headers=headers, timeout=10)
-                if r.status_code == 200 and r.json().get('drugs'):
-                    drug_id = r.json()['drugs'][0]['drug_chembl_id']
-                    # 查药物-靶点关联
-                    url2 = f"https://www.ebi.ac.uk/chembl/api/data/drug_target.json?drug_chembl_id={drug_id}&limit=10"
-                    r2 = requests.get(url2, headers=headers, timeout=10)
-                    if r2.status_code == 200 and r2.json().get('drug_targets'):
-                        target_list = []
-                        for dt in r2.json()['drug_targets']:
-                            if dt.get('target_chembl_id'):
-                                # 查靶点详情
-                                target_id = dt['target_chembl_id']
-                                url3 = f"https://www.ebi.ac.uk/chembl/api/data/target.json?target_chembl_id={target_id}&limit=1"
-                                r3 = requests.get(url3, headers=headers, timeout=10)
-                                if r3.status_code == 200 and r3.json().get('targets'):
-                                    target_name = r3.json()['targets'][0].get('pref_name', '')
-                                    if target_name:
-                                        target_list.append(target_name)
-                        if target_list:
-                            targets = "、".join(list(set(target_list)))
-                            break
-            except Exception as e:
-                time.sleep(retry_delay)
-                continue
-    except:
-        pass
-
-    # 3. 缓存结果
-    cache[drug_name_clean] = targets if targets != "" else "暂无靶点信息"
-    save_cache(cache, DRUG_TARGET_CACHE_FILE)
-    
-    return cache[drug_name_clean]
-
-# --------------------------
-# 保留原有通用工具函数（load_cache/save_cache）...
+# 通用工具函数
 # --------------------------
 def load_cache(cache_file):
     if os.path.exists(cache_file):
@@ -189,11 +111,10 @@ def save_cache(cache_dict, cache_file):
         print(f"⚠️ 缓存保存失败: {e}")
 
 # --------------------------
-# 保留原有核心API函数（get_smiles_by_id）...
+# 核心API函数
 # --------------------------
 @lru_cache(maxsize=1000)
 def get_smiles_by_id(ligand_id):
-    # 原有逻辑保持不变...
     if not ligand_id or ligand_id == "ZZZ":
         return None
     
@@ -266,9 +187,6 @@ def get_smiles_by_id(ligand_id):
     
     return None
 
-# --------------------------
-# 修改search_chembl_drugs函数：补全适应症 + 添加靶点列
-# --------------------------
 @lru_cache(maxsize=500)
 def search_chembl_drugs(smiles, similarity_threshold):
     if not smiles: return [], "SMILES为空", 0
@@ -295,17 +213,11 @@ def search_chembl_drugs(smiles, similarity_threshold):
                 
                 drug_name = m.get('pref_name', '').upper()
                 
-                # 1. 智能适应症获取（新增：调用补全函数）
+                # 智能适应症获取
                 indication_list = []
-                # 先查手动映射
                 if drug_name in MANUAL_DRUG_INDICATION:
                     indication_list.append(MANUAL_DRUG_INDICATION[drug_name])
-                # 再查ChEMBL/PubChem API补全
-                else:
-                    api_indication = get_drug_indication_by_name(drug_name)
-                    if api_indication != "暂无明确适应症":
-                        indication_list.append(api_indication)
-                # 最后查原有indication映射
+                
                 if not indication_list:
                     drug_indications = m.get('drug_indications', [])
                     for ind in drug_indications:
@@ -315,16 +227,16 @@ def search_chembl_drugs(smiles, similarity_threshold):
                             if eng in mesh_term or eng in efo_term:
                                 indication_list.append(cn)
                                 break
-                # 兜底：再次调用API补全
+                
                 if not indication_list:
                     base_name = drug_name.replace(' SULFATE', '').replace(' HYDROCHLORIDE', '')
-                    api_indication = get_drug_indication_by_name(base_name)
-                    indication_list.append(api_indication if api_indication else "暂无明确适应症")
+                    if base_name in MANUAL_DRUG_INDICATION:
+                        indication_list.append(MANUAL_DRUG_INDICATION[base_name])
                 
-                # 去重并格式化适应症
-                final_indication = "、".join(list(set(indication_list)))
+                if not indication_list:
+                    indication_list.append("暂无明确适应症")
                 
-                # 2. 药物分类
+                # 药物分类
                 drug_class = "未分类"
                 atc_list = m.get('atc_classifications', [])
                 if atc_list:
@@ -336,17 +248,13 @@ def search_chembl_drugs(smiles, similarity_threshold):
                         if atc_first in ATC_CLASS_MAP:
                             drug_class = ATC_CLASS_MAP[atc_first]
                 
-                # 3. 获取官方靶点（新增）
-                official_targets = get_drug_targets_by_name(drug_name)
-                
                 drugs.append({
                     "药物名称": m.get('pref_name'),
                     "ChEMBL ID": m.get('molecule_chembl_id'),
                     "相似度(%)": round(float(m.get('similarity', 0)), 2),
                     "分子量": round(float(m.get('molecule_properties', {}).get('full_mwt', 0)), 2),
                     "药物分类": drug_class,
-                    "治疗适应症": final_indication,
-                    "上市药物官方靶点": official_targets  # 新增列
+                    "治疗适应症": "、".join(list(set(indication_list)))
                 })
             
             drugs.sort(key=lambda x: x["相似度(%)"], reverse=True)
@@ -361,7 +269,7 @@ def search_chembl_drugs(smiles, similarity_threshold):
         return [], f"异常: {str(e)}", 0
 
 # --------------------------
-# 保留原有靶点加载函数（load_all_rna_targets/load_antibacterial_targets）...
+# 靶点加载函数
 # --------------------------
 def load_all_rna_targets():
     """加载所有RNA靶点"""
@@ -466,7 +374,7 @@ def load_antibacterial_targets():
     return antibacterial_df
 
 # --------------------------
-# 修改batch_analyze_targets函数：添加「上市药物官方靶点」列
+# 批量药物分析与报告生成
 # --------------------------
 def batch_analyze_targets(targets_df, similarity_threshold, output_dir, report_title, report_subtitle):
     """批量分析靶点并生成报告"""
@@ -529,11 +437,10 @@ def batch_analyze_targets(targets_df, similarity_threshold, output_dir, report_t
     result_df["优先级分数"] = result_df.apply(calculate_priority, axis=1)
     result_df = result_df.sort_values(by=["优先级分数", "相似度(%)"], ascending=False)
     
-    # 重新排列列顺序（新增「上市药物官方靶点」列）
+    # 重新排列列顺序
     column_order = [
         "优先级分数", "RNA类别", "PDB ID", "配体ID", "药物名称", 
-        "药物分类", "治疗适应症", "上市药物官方靶点",  # 新增列
-        "相似度(%)", "分子量", "ChEMBL ID", "RNA结构描述"
+        "药物分类", "治疗适应症", "相似度(%)", "分子量", "ChEMBL ID", "RNA结构描述"
     ]
     result_df = result_df[column_order]
     
@@ -577,7 +484,7 @@ def batch_analyze_targets(targets_df, similarity_threshold, output_dir, report_t
             <div class="container">
                 <h1 class="text-center">{report_title}</h1>
                 <p class="text-center lead">{report_subtitle}</p>
-                <p class="text-center">报告生成时间: {timestamp} | 相似度阈值: {similarity_threshold}%</p>
+                <p class="text-center">报告生成时间: {timestamp}</p>
             </div>
         </div>
 
@@ -678,17 +585,17 @@ def batch_analyze_targets(targets_df, similarity_threshold, output_dir, report_t
     print(f"\n📌 高优先级候选药物TOP 5:")
     for i in range(min(5, len(result_df))):
         row = result_df.iloc[i]
-        print(f"   {i+1}. {row['药物名称']} (相似度: {row['相似度(%)']}%, RNA类别: {row['RNA类别']}, 靶点: {row['PDB ID']}, 官方靶点: {row['上市药物官方靶点']})")
+        print(f"   {i+1}. {row['药物名称']} (相似度: {row['相似度(%)']}%, RNA类别: {row['RNA类别']}, 靶点: {row['PDB ID']})")
     
     return result_df
 
 # --------------------------
-# 主函数保持不变（已支持传入阈值参数）
+# 主函数
 # --------------------------
 def main():
     # 解析命令行参数
     mode = "all"  # 默认全RNA模式
-    similarity_threshold = 70  # 兜底默认值（工作流已改为40%）
+    similarity_threshold = 40
     
     if len(sys.argv) > 1:
         mode = sys.argv[1].lower()
@@ -723,9 +630,9 @@ def main():
         report_subtitle
     )
     
-    print("\n" + "="*70)
+    print("\n" + "="*40)
     print("✅ 分析流程完成！")
-    print("="*70)
+    print("="*40)
     print(f"\n📂 所有结果已保存到 '{output_dir}' 目录")
 
 if __name__ == "__main__":
