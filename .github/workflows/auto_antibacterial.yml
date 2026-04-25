@@ -6,7 +6,7 @@ on:
       similarity_threshold:
         description: '药物相似度阈值 (%)'
         required: true
-        default: '70'
+        default: '40'
         type: string
 
 jobs:
