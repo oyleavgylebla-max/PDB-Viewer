@@ -1,6 +1,6 @@
 import pandas as pd
 import re
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # ✅ 修正拼写错误
 import seaborn as sns
 import os
 import sys
