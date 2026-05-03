@@ -1,6 +1,6 @@
 import pandas as pd
 import re
-import matplotlib.pyplot as plt  # ✅ 修正拼写错误
+import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import sys
@@ -94,9 +94,9 @@ def main():
         print(f"   - {target_type}：{count} 个")
 
     # 步骤4：生成结果文件
-    # 4.1 总表（Excel，含所有信息）
+    # 4.1 总表（Excel，含所有信息）✅ 移除encoding参数，使用openpyxl引擎
     total_output_path = os.path.join(OUTPUT_DIR, "PDB_抗微生物RNA靶点总表.xlsx")
-    filtered_df.to_excel(total_output_path, index=False, encoding="utf-8-sig")
+    filtered_df.to_excel(total_output_path, index=False, engine="openpyxl")
     
     # 4.2 分类子表（CSV，便于单独分析）
     for target_type in ["抗细菌相关", "抗病毒相关", "抗虫相关"]:
